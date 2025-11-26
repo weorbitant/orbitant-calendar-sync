@@ -3,7 +3,8 @@ import { initializeDatabase, closeDatabase } from './config/database.js';
 import { getSyncScheduler } from './jobs/SyncScheduler.js';
 import GoogleCalendarService from './services/google-calendar.js';
 import slackApp from './slack/app.js';
-import { registerCalendariosCommand } from './slack/commands/calendarios.js';
+import { registerAjustesCommand } from './slack/commands/ajustes.js';
+import { registerCalendarioCommand } from './slack/commands/calendario.js';
 import { exchangeCodeForTokens, validateOAuthState, getGoogleUserInfo } from './slack/actions/oauth.js';
 import { OAuthToken } from './models/OAuthToken.js';
 
@@ -40,7 +41,7 @@ async function initCalendarService() {
  * POST /api/webhook
  * Endpoint para recibir notificaciones push de Google
  */
-app.post('/api/webhook', async (req, res) => {
+app.post('/api/google/webhook', async (req, res) => {
   const channelId = req.headers['x-goog-channel-id'];
   const resourceState = req.headers['x-goog-resource-state'];
 
@@ -66,7 +67,7 @@ app.post('/api/webhook', async (req, res) => {
  * POST /api/webhook/register
  * Registra un webhook para recibir notificaciones push
  */
-app.post('/api/webhook/register', async (req, res) => {
+app.post('/api/google/webhook/register', async (req, res) => {
   if (!calendarService) {
     return res.status(503).json({
       success: false,
@@ -103,7 +104,7 @@ app.post('/api/webhook/register', async (req, res) => {
  * DELETE /api/webhook/:channelId
  * Detiene un webhook registrado
  */
-app.delete('/api/webhook/:channelId', async (req, res) => {
+app.delete('/api/google/webhook/:channelId', async (req, res) => {
   if (!calendarService) {
     return res.status(503).json({
       success: false,
@@ -314,7 +315,8 @@ async function start() {
     scheduler.start();
 
     // Registrar comandos de Slack
-    registerCalendariosCommand(slackApp);
+    registerAjustesCommand(slackApp);
+    registerCalendarioCommand(slackApp);
 
     // Iniciar bot de Slack (Socket Mode)
     await slackApp.start();
@@ -324,9 +326,9 @@ async function start() {
       console.log(`\nServidor corriendo en http://localhost:${PORT}`);
       console.log('\nEndpoints disponibles:');
       console.log('  GET    /auth/google/callback  - Callback OAuth Google');
-      console.log('  POST   /api/webhook           - Receptor de notificaciones Google');
-      console.log('  POST   /api/webhook/register  - Registrar webhook Google');
-      console.log('  DELETE /api/webhook/:id       - Cancelar webhook');
+      console.log('  POST   /api/google/webhook           - Receptor de notificaciones Google');
+      console.log('  POST   /api/google/webhook/register  - Registrar webhook Google');
+      console.log('  DELETE /api/google/webhook/:id       - Cancelar webhook');
       console.log('  GET    /health                - Estado del servicio');
       console.log('\nComandos de Slack:');
       console.log('  /calendarios                  - Gestionar calendarios\n');
