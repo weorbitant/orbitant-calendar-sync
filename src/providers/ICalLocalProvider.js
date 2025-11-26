@@ -20,12 +20,12 @@ export class ICalLocalProvider extends BaseProvider {
     const { path } = this.source.config;
     try {
       statSync(path);
-    } catch (error) {
+    } catch {
       throw new Error(`iCal file not found: ${path}`);
     }
   }
 
-  async fetchEvents(options = {}) {
+  async fetchEvents(_options = {}) {
     const { path } = this.source.config;
 
     const stat = statSync(path);

@@ -37,6 +37,40 @@ export class ICalGenerator {
   }
 
   /**
+   * Generate iCalendar for a Slack user (all their sources, current year)
+   * @param {string} slackUserId
+   * @param {Object} options
+   * @param {number} [options.year] - Year to filter (default: current year)
+   * @returns {string}
+   */
+  generateForUser(slackUserId, options = {}) {
+    // Get all sources for this user
+    const userSources = Source.findBySlackUserId(slackUserId);
+    if (!userSources.length) {
+      return this.buildICalendar([], {});
+    }
+
+    // Build sources map
+    const sourcesMap = userSources.reduce((map, source) => {
+      map[source.id] = source;
+      return map;
+    }, {});
+
+    // Calculate date range for current year
+    const year = options.year || new Date().getFullYear();
+    const startDate = `${year}-01-01T00:00:00.000Z`;
+    const endDate = `${year}-12-31T23:59:59.999Z`;
+
+    // Get source IDs
+    const sourceIds = userSources.map(s => s.id);
+
+    // Get events from all user sources within the year
+    const events = Event.findBySourceIds(sourceIds, { startDate, endDate });
+
+    return this.buildICalendar(events, sourcesMap);
+  }
+
+  /**
    * Get map of sources by ID
    * @returns {Object}
    */
@@ -121,7 +155,7 @@ export class ICalGenerator {
         const rruleStr = event.recurrence.replace(/^RRULE:?/i, '');
         const rrule = ICAL.Recur.fromString(rruleStr);
         vevent.updatePropertyWithValue('rrule', rrule);
-      } catch (e) {
+      } catch {
         // Skip invalid recurrence rules
         console.warn(`[ICalGenerator] Invalid recurrence rule for event ${event.id}: ${event.recurrence}`);
       }
@@ -169,7 +203,6 @@ export class ICalGenerator {
       time.month = parseInt(dateStr.substring(4, 6));
       time.day = parseInt(dateStr.substring(6, 8));
       time.isDate = true;
-      prop.setParameter('value', 'DATE');
       prop.setValue(time);
     } else {
       // DateTime

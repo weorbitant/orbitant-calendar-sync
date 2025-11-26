@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "auth": "node src/scripts/generate-tokens.js"
+    "auth": "node src/scripts/generate-tokens.js",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix"
   },
   "dependencies": {
     "@slack/bolt": "^4.6.0",
@@ -20,6 +22,9 @@
     "uuid": "^11.0.3"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0",
     "open": "^10.0.0"
   }
 }

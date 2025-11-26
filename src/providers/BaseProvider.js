@@ -31,7 +31,7 @@ export class BaseProvider {
    * @param {Object} options - Fetch options
    * @returns {Promise<Array>} Array of normalized events
    */
-  async fetchEvents(options = {}) {
+  async fetchEvents(_options = {}) {
     throw new Error('fetchEvents() must be implemented');
   }
 
@@ -40,7 +40,7 @@ export class BaseProvider {
    * @param {Object} syncState - Previous sync state
    * @returns {Promise<Object>} Object containing { events, deleted, newSyncState }
    */
-  async sync(syncState) {
+  async sync(_syncState) {
     // Default: full fetch (providers can override for incremental sync)
     const events = await this.fetchEvents();
     return {
@@ -55,7 +55,7 @@ export class BaseProvider {
    * @param {Object} rawEvent - Raw event from the provider
    * @returns {Object} Normalized event
    */
-  normalizeEvent(rawEvent) {
+  normalizeEvent(_rawEvent) {
     throw new Error('normalizeEvent() must be implemented');
   }
 

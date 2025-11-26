@@ -7,14 +7,14 @@ import ICalLocalProvider from '../providers/ICalLocalProvider.js';
  */
 export function createProvider(source) {
   switch (source.type) {
-    case 'google':
-      return new GoogleCalendarProvider(source);
-    case 'ical_remote':
-      return new ICalRemoteProvider(source);
-    case 'ical_local':
-      return new ICalLocalProvider(source);
-    default:
-      throw new Error(`Unknown source type: ${source.type}`);
+  case 'google':
+    return new GoogleCalendarProvider(source);
+  case 'ical_remote':
+    return new ICalRemoteProvider(source);
+  case 'ical_local':
+    return new ICalLocalProvider(source);
+  default:
+    throw new Error(`Unknown source type: ${source.type}`);
   }
 }
 

@@ -32,9 +32,9 @@ export function getGoogleAuthUrl(slackUser = {}) {
   const scopes = process.env.GOOGLE_SCOPES
     ? process.env.GOOGLE_SCOPES.split(',').map(s => s.trim())
     : [
-        'https://www.googleapis.com/auth/calendar.readonly',
-        'https://www.googleapis.com/auth/userinfo.email'
-      ];
+      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/userinfo.email'
+    ];
 
   // Generar state unico con datos del usuario de Slack
   const state = crypto.randomBytes(32).toString('hex');

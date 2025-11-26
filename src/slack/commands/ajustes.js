@@ -1,6 +1,68 @@
 import { getGoogleAuthUrl } from '../actions/oauth.js';
 import { OAuthToken } from '../../models/OAuthToken.js';
+import { FeedToken } from '../../models/FeedToken.js';
 import GoogleCalendarService from '../../services/google-calendar.js';
+import { buildSourcesBlocks } from '../actions/sources.js';
+
+/**
+ * Construye la URL del feed iCal para un usuario
+ * @param {string} slackUserId
+ * @returns {string}
+ */
+function getFeedUrl(slackUserId) {
+  const feedToken = FeedToken.getOrCreateForUser(slackUserId);
+  const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+  return `${baseUrl}/feed/${feedToken.token}/orbitando.ics`;
+}
+
+/**
+ * Construye los bloques de la seccion "Mi Feed iCal"
+ * @param {string} slackUserId
+ * @returns {Array}
+ */
+function buildFeedBlocks(slackUserId) {
+  const feedUrl = getFeedUrl(slackUserId);
+
+  return [
+    { type: 'divider' },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: '*Mi Feed iCal*\n\nSuscribete desde cualquier app de calendario:'
+      }
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `\`${feedUrl}\``
+      },
+      accessory: {
+        type: 'button',
+        text: { type: 'plain_text', text: 'Regenerar URL', emoji: true },
+        action_id: 'regenerate_feed_token',
+        style: 'danger',
+        confirm: {
+          title: { type: 'plain_text', text: 'Regenerar URL del feed' },
+          text: {
+            type: 'mrkdwn',
+            text: 'Esto invalidara la URL actual. Los calendarios que la esten usando dejaran de actualizarse.\n\nDeseas continuar?'
+          },
+          confirm: { type: 'plain_text', text: 'Si, regenerar' },
+          deny: { type: 'plain_text', text: 'Cancelar' }
+        }
+      }
+    },
+    {
+      type: 'context',
+      elements: [{
+        type: 'mrkdwn',
+        text: '_Copia esta URL en Google Calendar, Apple Calendar u Outlook_'
+      }]
+    }
+  ];
+}
 
 /**
  * Verifica si un usuario es administrador
@@ -21,12 +83,12 @@ function isAdmin(userId) {
 function buildFooterBlocks(userId, lastSyncDate) {
   const syncText = lastSyncDate
     ? new Date(lastSyncDate).toLocaleString('es-ES', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
     : 'nunca';
 
   const blocks = [
@@ -73,6 +135,8 @@ export function registerAjustesCommand(app) {
     if (hasValidTokens) {
       // Ya autenticado - mostrar opciones de calendario
       const footerBlocks = buildFooterBlocks(slackUserId, tokenRecord.updated_at);
+      const sourcesBlocks = buildSourcesBlocks(slackUserId);
+      const feedBlocks = buildFeedBlocks(slackUserId);
 
       await client.chat.postEphemeral({
         channel: command.channel_id,
@@ -83,7 +147,7 @@ export function registerAjustesCommand(app) {
             type: 'header',
             text: {
               type: 'plain_text',
-              text: '⚙️ Ajustes de Calendario',
+              text: 'Ajustes de Calendario',
               emoji: true
             }
           },
@@ -91,7 +155,7 @@ export function registerAjustesCommand(app) {
             type: 'section',
             text: {
               type: 'mrkdwn',
-              text: `✅ *Google Calendar conectado*\n\n📧 *Cuenta:* ${tokenRecord.google_email || 'No disponible'}`
+              text: `*Google Calendar conectado*\n\n*Cuenta:* ${tokenRecord.google_email || 'No disponible'}`
             },
             accessory: {
               type: 'image',
@@ -104,7 +168,7 @@ export function registerAjustesCommand(app) {
             elements: [
               {
                 type: 'mrkdwn',
-                text: `🔗 _Vinculado desde: ${new Date(tokenRecord.created_at).toLocaleDateString('es-ES')}_`
+                text: `_Vinculado desde: ${new Date(tokenRecord.created_at).toLocaleDateString('es-ES')}_`
               }
             ]
           },
@@ -112,7 +176,7 @@ export function registerAjustesCommand(app) {
             type: 'section',
             text: {
               type: 'mrkdwn',
-              text: '💡 *Tip:* Usa `/calendario` para ver tus eventos de hoy y mañana'
+              text: '*Tip:* Usa `/calendario` para ver tus eventos de hoy y manana'
             }
           },
           {
@@ -122,7 +186,7 @@ export function registerAjustesCommand(app) {
                 type: 'button',
                 text: {
                   type: 'plain_text',
-                  text: '🔌 Desconectar cuenta',
+                  text: 'Desconectar cuenta',
                   emoji: true
                 },
                 style: 'danger',
@@ -130,11 +194,11 @@ export function registerAjustesCommand(app) {
                 confirm: {
                   title: {
                     type: 'plain_text',
-                    text: '⚠️ Desconectar Google Calendar'
+                    text: 'Desconectar Google Calendar'
                   },
                   text: {
                     type: 'mrkdwn',
-                    text: 'Esto eliminara la conexion con tu cuenta de Google.\n\n¿Estas seguro que deseas continuar?'
+                    text: 'Esto eliminara la conexion con tu cuenta de Google.\n\nEstas seguro que deseas continuar?'
                   },
                   confirm: {
                     type: 'plain_text',
@@ -148,6 +212,8 @@ export function registerAjustesCommand(app) {
               }
             ]
           },
+          ...feedBlocks,
+          ...sourcesBlocks,
           ...footerBlocks
         ]
       });
@@ -160,6 +226,7 @@ export function registerAjustesCommand(app) {
       });
 
       const footerBlocks = buildFooterBlocks(slackUserId, null);
+      const sourcesBlocks = buildSourcesBlocks(slackUserId);
 
       await client.chat.postEphemeral({
         channel: command.channel_id,
@@ -170,7 +237,7 @@ export function registerAjustesCommand(app) {
             type: 'header',
             text: {
               type: 'plain_text',
-              text: '📅 Conectar Google Calendar',
+              text: 'Ajustes de Calendario',
               emoji: true
             }
           },
@@ -178,7 +245,7 @@ export function registerAjustesCommand(app) {
             type: 'section',
             text: {
               type: 'mrkdwn',
-              text: '🔗 *Vincular cuenta de Google*\n\nPara ver tus eventos del calendario, primero necesitas conectar tu cuenta de Google.'
+              text: '*Vincular cuenta de Google*\n\nPara ver tus eventos del calendario de Google, primero necesitas conectar tu cuenta.'
             },
             accessory: {
               type: 'image',
@@ -193,7 +260,7 @@ export function registerAjustesCommand(app) {
                 type: 'button',
                 text: {
                   type: 'plain_text',
-                  text: '🚀 Conectar con Google',
+                  text: 'Conectar con Google',
                   emoji: true
                 },
                 style: 'primary',
@@ -207,10 +274,11 @@ export function registerAjustesCommand(app) {
             elements: [
               {
                 type: 'mrkdwn',
-                text: '🔒 _Tu informacion se almacena de forma segura y encriptada_'
+                text: '_Tu informacion se almacena de forma segura y encriptada_'
               }
             ]
           },
+          ...sourcesBlocks,
           ...footerBlocks
         ]
       });
@@ -253,6 +321,56 @@ export function registerAjustesCommand(app) {
   // Handler para el boton de OAuth (no se ejecuta porque tiene URL)
   app.action('google_oauth_start', async ({ ack }) => {
     await ack();
+  });
+
+  // Handler para regenerar token del feed iCal
+  app.action('regenerate_feed_token', async ({ body, ack, client }) => {
+    await ack();
+
+    const slackUserId = body.user.id;
+
+    try {
+      // Regenerar token
+      const newToken = FeedToken.regenerateToken(slackUserId);
+      const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+      const newFeedUrl = `${baseUrl}/feed/${newToken.token}/orbitando.ics`;
+
+      await client.chat.postEphemeral({
+        channel: body.channel.id,
+        user: slackUserId,
+        text: 'URL regenerada',
+        blocks: [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: '*Nueva URL del feed generada:*'
+            }
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `\`${newFeedUrl}\``
+            }
+          },
+          {
+            type: 'context',
+            elements: [{
+              type: 'mrkdwn',
+              text: '_La URL anterior ha sido invalidada. Actualiza la suscripcion en tus apps de calendario._'
+            }]
+          }
+        ]
+      });
+    } catch (error) {
+      console.error('[Slack] Error regenerando feed token:', error.message);
+      await client.chat.postEphemeral({
+        channel: body.channel.id,
+        user: slackUserId,
+        text: `Error al regenerar URL: ${error.message}`
+      });
+    }
   });
 
   // Handler para sincronizar calendario (solo admins)
@@ -299,7 +417,7 @@ export function registerAjustesCommand(app) {
       await client.chat.postEphemeral({
         channel: body.channel.id,
         user: slackUserId,
-        text: `✅ Sincronizacion completada`,
+        text: '✅ Sincronizacion completada',
         blocks: [
           {
             type: 'section',

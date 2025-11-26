@@ -3,8 +3,9 @@
 -- Tabla: sources (fuentes de calendario)
 CREATE TABLE IF NOT EXISTS sources (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slack_user_id TEXT,
     name TEXT NOT NULL,
-    type TEXT NOT NULL CHECK(type IN ('google', 'ical_remote', 'ical_local')),
+    type TEXT NOT NULL CHECK(type IN ('google', 'ical_remote', 'ical_local', 'microsoft')),
     config TEXT NOT NULL,
     enabled INTEGER DEFAULT 1,
     color TEXT,
@@ -49,6 +50,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
 CREATE INDEX IF NOT EXISTS idx_events_source ON events(source_id);
 CREATE INDEX IF NOT EXISTS idx_events_start ON events(start_datetime);
 CREATE INDEX IF NOT EXISTS idx_sync_state_source ON sync_state(source_id);
+CREATE INDEX IF NOT EXISTS idx_sources_slack_user ON sources(slack_user_id);
 
 -- Tabla: oauth_tokens (tokens OAuth por usuario de Slack)
 CREATE TABLE IF NOT EXISTS oauth_tokens (
@@ -71,3 +73,16 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
 -- Indices para oauth_tokens
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_slack_user ON oauth_tokens(slack_user_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_provider ON oauth_tokens(provider);
+
+-- Tabla: feed_tokens (tokens unicos para acceder al feed iCal)
+CREATE TABLE IF NOT EXISTS feed_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slack_user_id TEXT NOT NULL UNIQUE,
+    token TEXT NOT NULL UNIQUE,
+    created_at TEXT DEFAULT (datetime('now')),
+    last_used_at TEXT
+);
+
+-- Indices para feed_tokens
+CREATE INDEX IF NOT EXISTS idx_feed_tokens_token ON feed_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_feed_tokens_slack_user ON feed_tokens(slack_user_id);

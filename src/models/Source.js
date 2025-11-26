@@ -3,6 +3,7 @@ import { getDatabase } from '../config/database.js';
 export class Source {
   constructor(data) {
     this.id = data.id;
+    this.slack_user_id = data.slack_user_id;
     this.name = data.name;
     this.type = data.type;
     this.config = typeof data.config === 'string' ? JSON.parse(data.config) : data.config;
@@ -87,9 +88,112 @@ export class Source {
     return result.changes > 0;
   }
 
+  // ============================================
+  // Metodos para consultas por usuario de Slack
+  // ============================================
+
+  /**
+   * Encuentra todos los sources de un usuario de Slack
+   * @param {string} slackUserId
+   * @returns {Source[]}
+   */
+  static findBySlackUserId(slackUserId) {
+    const db = getDatabase();
+    const rows = db.prepare(
+      'SELECT * FROM sources WHERE slack_user_id = ? ORDER BY created_at DESC'
+    ).all(slackUserId);
+    return rows.map(row => new Source(row));
+  }
+
+  /**
+   * Encuentra un source por ID verificando propiedad del usuario
+   * @param {number} id
+   * @param {string} slackUserId
+   * @returns {Source|null}
+   */
+  static findByIdAndUser(id, slackUserId) {
+    const db = getDatabase();
+    const row = db.prepare(
+      'SELECT * FROM sources WHERE id = ? AND slack_user_id = ?'
+    ).get(id, slackUserId);
+    return row ? new Source(row) : null;
+  }
+
+  /**
+   * Cuenta los sources de un usuario
+   * @param {string} slackUserId
+   * @returns {number}
+   */
+  static countBySlackUserId(slackUserId) {
+    const db = getDatabase();
+    const result = db.prepare(
+      'SELECT COUNT(*) as count FROM sources WHERE slack_user_id = ?'
+    ).get(slackUserId);
+    return result.count;
+  }
+
+  /**
+   * Crea un source asociado a un usuario de Slack
+   * @param {Object} data
+   * @param {string} slackUserId
+   * @returns {Source}
+   */
+  static createForUser(data, slackUserId) {
+    const db = getDatabase();
+    const config = typeof data.config === 'object'
+      ? JSON.stringify(data.config)
+      : data.config;
+
+    const stmt = db.prepare(`
+      INSERT INTO sources (slack_user_id, name, type, config, enabled, color)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      slackUserId,
+      data.name,
+      data.type,
+      config,
+      data.enabled ?? 1,
+      data.color || null
+    );
+    return Source.findById(result.lastInsertRowid);
+  }
+
+  /**
+   * Elimina un source verificando propiedad del usuario
+   * @param {number} id
+   * @param {string} slackUserId
+   * @returns {boolean}
+   */
+  static deleteForUser(id, slackUserId) {
+    const db = getDatabase();
+    const stmt = db.prepare(
+      'DELETE FROM sources WHERE id = ? AND slack_user_id = ?'
+    );
+    const result = stmt.run(id, slackUserId);
+    return result.changes > 0;
+  }
+
+  /**
+   * Actualiza un source verificando propiedad del usuario
+   * @param {number} id
+   * @param {string} slackUserId
+   * @param {Object} data
+   * @returns {Source|null}
+   */
+  static updateForUser(id, slackUserId, data) {
+    // Verificar propiedad primero
+    const source = Source.findByIdAndUser(id, slackUserId);
+    if (!source) return null;
+
+    return Source.update(id, data);
+  }
+
   toJSON() {
     return {
       id: this.id,
+      slack_user_id: this.slack_user_id,
       name: this.name,
       type: this.type,
       config: this.config,

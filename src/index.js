@@ -5,8 +5,12 @@ import GoogleCalendarService from './services/google-calendar.js';
 import slackApp from './slack/app.js';
 import { registerAjustesCommand } from './slack/commands/ajustes.js';
 import { registerCalendarioCommand } from './slack/commands/calendario.js';
+import { registerSourceActions } from './slack/actions/sources.js';
 import { exchangeCodeForTokens, validateOAuthState, getGoogleUserInfo } from './slack/actions/oauth.js';
 import { OAuthToken } from './models/OAuthToken.js';
+import { FeedToken } from './models/FeedToken.js';
+import { ICalGenerator } from './services/ICalGenerator.js';
+import { Source } from './models/Source.js';
 
 const app = express();
 app.use(express.json());
@@ -14,7 +18,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // Legacy: Almacén en memoria para syncToken de webhooks Google
-let legacySyncState = {
+const legacySyncState = {
   syncToken: null,
   lastSync: null
 };
@@ -236,6 +240,21 @@ app.get('/auth/google/callback', async (req, res) => {
 
     console.log(`[OAuth] Tokens guardados para usuario Slack: ${stateData.slackUserId} (${googleEmail || 'email desconocido'})`);
 
+    // Create Google Calendar source for this user (if not exists)
+    const existingGoogleSources = Source.findBySlackUserId(stateData.slackUserId)
+      .filter(s => s.type === 'google');
+
+    if (existingGoogleSources.length === 0) {
+      Source.createForUser({
+        name: `Google Calendar (${googleEmail || 'primary'})`,
+        type: 'google',
+        config: { calendarId: 'primary' },
+        enabled: 1,
+        color: '#4285F4'
+      }, stateData.slackUserId);
+      console.log(`[OAuth] Created Google Calendar source for user: ${stateData.slackUserId}`);
+    }
+
     res.send(`
       <!DOCTYPE html>
       <html lang="es">
@@ -283,6 +302,40 @@ app.get('/auth/google/callback', async (req, res) => {
 });
 
 // ============================================
+// ICAL FEED ENDPOINT
+// ============================================
+
+/**
+ * GET /feed/:token/orbitando.ics
+ * Returns iCal feed for a user (all their calendars, current year)
+ */
+app.get('/feed/:token/orbitando.ics', (req, res) => {
+  const { token } = req.params;
+
+  // Find user by token
+  const feedToken = FeedToken.findByToken(token);
+  if (!feedToken) {
+    return res.status(404).send('Feed not found');
+  }
+
+  // Update last used timestamp
+  FeedToken.updateLastUsed(token);
+
+  // Generate iCal feed for this user
+  const generator = new ICalGenerator({
+    calendarName: 'Mi Calendario Unificado'
+  });
+  const icalContent = generator.generateForUser(feedToken.slack_user_id);
+
+  // Return as iCal
+  res.set({
+    'Content-Type': 'text/calendar; charset=utf-8',
+    'Content-Disposition': 'attachment; filename="calendar.ics"'
+  });
+  res.send(icalContent);
+});
+
+// ============================================
 // HEALTH CHECK
 // ============================================
 
@@ -314,9 +367,10 @@ async function start() {
     const scheduler = getSyncScheduler();
     scheduler.start();
 
-    // Registrar comandos de Slack
+    // Registrar comandos y acciones de Slack
     registerAjustesCommand(slackApp);
     registerCalendarioCommand(slackApp);
+    registerSourceActions(slackApp);
 
     // Iniciar bot de Slack (Socket Mode)
     await slackApp.start();
@@ -329,6 +383,7 @@ async function start() {
       console.log('  POST   /api/google/webhook           - Receptor de notificaciones Google');
       console.log('  POST   /api/google/webhook/register  - Registrar webhook Google');
       console.log('  DELETE /api/google/webhook/:id       - Cancelar webhook');
+      console.log('  GET    /feed/:token/orbitando.ics - Feed iCal unificado');
       console.log('  GET    /health                - Estado del servicio');
       console.log('\nComandos de Slack:');
       console.log('  /calendarios                  - Gestionar calendarios\n');

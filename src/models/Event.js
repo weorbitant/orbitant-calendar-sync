@@ -62,7 +62,7 @@ export class Event {
         updated_at = datetime('now')
     `);
 
-    const result = stmt.run(
+    stmt.run(
       data.source_id,
       data.external_id,
       data.summary,
@@ -135,6 +135,39 @@ export class Event {
     const stmt = db.prepare(`DELETE FROM events WHERE source_id = ? AND external_id IN (${placeholders})`);
     const result = stmt.run(sourceId, ...externalIds);
     return result.changes;
+  }
+
+  /**
+   * Find events by multiple source IDs with optional date filter
+   * @param {number[]} sourceIds - Array of source IDs
+   * @param {Object} options
+   * @param {string} [options.startDate] - Start date filter (ISO string)
+   * @param {string} [options.endDate] - End date filter (ISO string)
+   * @returns {Event[]}
+   */
+  static findBySourceIds(sourceIds, { startDate, endDate } = {}) {
+    if (!sourceIds.length) return [];
+
+    const db = getDatabase();
+    const placeholders = sourceIds.map(() => '?').join(',');
+    const params = [...sourceIds];
+
+    let query = `SELECT * FROM events WHERE source_id IN (${placeholders})`;
+
+    if (startDate) {
+      query += ' AND start_datetime >= ?';
+      params.push(startDate);
+    }
+
+    if (endDate) {
+      query += ' AND start_datetime <= ?';
+      params.push(endDate);
+    }
+
+    query += ' ORDER BY start_datetime ASC';
+
+    const rows = db.prepare(query).all(...params);
+    return rows.map(row => new Event(row));
   }
 
   toJSON() {

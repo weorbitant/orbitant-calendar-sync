@@ -22,11 +22,14 @@ class GoogleCalendarService {
    */
   async initOAuthFromDB(slackUserId) {
     this.slackUserId = slackUserId;
+    console.log(`[GoogleCalendar] Initializing for Slack user: ${slackUserId}`);
 
     const tokenRecord = OAuthToken.findBySlackUserId(slackUserId, 'google');
     if (!tokenRecord) {
+      console.error(`[GoogleCalendar] No tokens found for user: ${slackUserId}`);
       throw new Error(`No hay tokens OAuth para el usuario: ${slackUserId}`);
     }
+    console.log(`[GoogleCalendar] Found tokens for: ${tokenRecord.google_email || 'unknown email'}`);
 
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
@@ -144,8 +147,15 @@ class GoogleCalendarService {
       ...(options.q && { q: options.q })
     };
 
+    console.log(`[GoogleCalendar] Fetching events for user: ${this.slackUserId || 'unknown'}`);
+    const startTime = Date.now();
+
     try {
       const response = await this.calendar.events.list(params);
+      const elapsed = Date.now() - startTime;
+      const eventCount = response.data.items?.length || 0;
+      console.log(`[GoogleCalendar] Fetched ${eventCount} events in ${elapsed}ms`);
+
       return {
         events: response.data.items || [],
         nextPageToken: response.data.nextPageToken,
@@ -210,8 +220,13 @@ class GoogleCalendarService {
       singleEvents: true
     };
 
+    const isFullSync = !syncToken;
+    console.log(`[GoogleCalendar] Starting ${isFullSync ? 'full' : 'incremental'} sync for user: ${this.slackUserId || 'unknown'}`);
+    const startTime = Date.now();
+
     if (syncToken) {
       params.syncToken = syncToken;
+      console.log(`[GoogleCalendar] Using syncToken: ${syncToken.substring(0, 20)}...`);
     } else {
       // Primera sincronización: obtener eventos desde hace 1 año
       params.timeMin = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
@@ -221,23 +236,33 @@ class GoogleCalendarService {
       const allEvents = [];
       let pageToken = null;
       let newSyncToken = null;
+      let pageCount = 0;
 
       do {
+        pageCount++;
         const response = await this.calendar.events.list({
           ...params,
           pageToken
         });
 
-        allEvents.push(...(response.data.items || []));
+        const pageEvents = response.data.items || [];
+        allEvents.push(...pageEvents);
         pageToken = response.data.nextPageToken;
         newSyncToken = response.data.nextSyncToken;
 
+        if (pageToken) {
+          console.log(`[GoogleCalendar] Page ${pageCount}: ${pageEvents.length} events, fetching more...`);
+        }
+
       } while (pageToken);
+
+      const elapsed = Date.now() - startTime;
+      console.log(`[GoogleCalendar] Sync completed: ${allEvents.length} events in ${elapsed}ms (${pageCount} pages)`);
 
       return {
         events: allEvents,
         syncToken: newSyncToken,
-        fullSync: !syncToken
+        fullSync: isFullSync
       };
 
     } catch (error) {

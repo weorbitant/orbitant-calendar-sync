@@ -18,8 +18,11 @@ export class ICalRemoteProvider extends BaseProvider {
     // No initialization needed for remote iCal
   }
 
-  async fetchEvents(options = {}) {
+  async fetchEvents(_options = {}) {
     const { url, headers = {}, timeout = 30000 } = this.source.config;
+
+    console.log(`[ICalRemote] Fetching: ${url}`);
+    const startTime = Date.now();
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -36,18 +39,27 @@ export class ICalRemoteProvider extends BaseProvider {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
+        console.error(`[ICalRemote] HTTP error: ${response.status} ${response.statusText}`);
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
       this.lastEtag = response.headers.get('etag');
       const icalData = await response.text();
+      const elapsed = Date.now() - startTime;
 
-      return this.parseICalData(icalData);
+      console.log(`[ICalRemote] Fetched ${icalData.length} bytes in ${elapsed}ms`);
+
+      const events = this.parseICalData(icalData);
+      console.log(`[ICalRemote] Parsed ${events.length} events`);
+
+      return events;
     } catch (error) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
+        console.error(`[ICalRemote] Request timeout after ${timeout}ms`);
         throw new Error(`Request timeout after ${timeout}ms`);
       }
+      console.error(`[ICalRemote] Fetch error: ${error.message}`);
       throw error;
     }
   }
@@ -57,6 +69,9 @@ export class ICalRemoteProvider extends BaseProvider {
 
     // Try conditional fetch with ETag
     if (syncState?.etag) {
+      console.log(`[ICalRemote] Sync with ETag: ${syncState.etag.substring(0, 20)}...`);
+      const startTime = Date.now();
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeout);
 
@@ -71,9 +86,11 @@ export class ICalRemoteProvider extends BaseProvider {
         });
 
         clearTimeout(timeoutId);
+        const elapsed = Date.now() - startTime;
 
         // Not modified - no changes
         if (response.status === 304) {
+          console.log(`[ICalRemote] Not modified (304) in ${elapsed}ms`);
           return {
             events: [],
             deleted: [],
@@ -83,12 +100,16 @@ export class ICalRemoteProvider extends BaseProvider {
         }
 
         if (!response.ok) {
+          console.error(`[ICalRemote] HTTP error: ${response.status} ${response.statusText}`);
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
         const newEtag = response.headers.get('etag');
         const icalData = await response.text();
+        console.log(`[ICalRemote] Fetched ${icalData.length} bytes in ${elapsed}ms (ETag changed)`);
+
         const events = this.parseICalData(icalData);
+        console.log(`[ICalRemote] Parsed ${events.length} events`);
 
         return {
           events,
@@ -99,13 +120,16 @@ export class ICalRemoteProvider extends BaseProvider {
       } catch (error) {
         clearTimeout(timeoutId);
         if (error.name === 'AbortError') {
+          console.error(`[ICalRemote] Request timeout after ${timeout}ms`);
           throw new Error(`Request timeout after ${timeout}ms`);
         }
+        console.error(`[ICalRemote] Sync error: ${error.message}`);
         throw error;
       }
     }
 
     // No ETag available - full fetch
+    console.log('[ICalRemote] No ETag, performing full fetch');
     const events = await this.fetchEvents();
     return {
       events,

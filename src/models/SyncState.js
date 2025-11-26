@@ -66,7 +66,6 @@ export class SyncState {
   }
 
   static markError(sourceId, error) {
-    const db = getDatabase();
     const existing = SyncState.findBySourceId(sourceId);
 
     return SyncState.upsert(sourceId, {
@@ -79,7 +78,6 @@ export class SyncState {
   }
 
   static markPending(sourceId) {
-    const db = getDatabase();
     const existing = SyncState.findBySourceId(sourceId);
 
     return SyncState.upsert(sourceId, {
