@@ -4,4 +4,3 @@ credentials/
 data/
 *.log
 .DS_Store
-data/schema.sql

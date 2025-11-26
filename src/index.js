@@ -2,9 +2,6 @@ import express from 'express';
 import dotenv from 'dotenv';
 import { initializeDatabase, closeDatabase } from './config/database.js';
 import { getSyncScheduler } from './jobs/SyncScheduler.js';
-import sourcesRouter from './routes/sources.js';
-import syncRouter from './routes/sync.js';
-import calendarRouter from './routes/calendar.js';
 import GoogleCalendarService from './services/google-calendar.js';
 
 dotenv.config();
@@ -35,15 +32,7 @@ async function initCalendarService() {
 }
 
 // ============================================
-// NEW API ROUTES
-// ============================================
-
-app.use('/api/sources', sourcesRouter);
-app.use('/api/sync', syncRouter);
-app.use('/api', calendarRouter);
-
-// ============================================
-// LEGACY WEBHOOK ENDPOINTS (Google Push Notifications)
+// WEBHOOK ENDPOINTS (Google Push Notifications)
 // ============================================
 
 /**
@@ -139,21 +128,6 @@ app.delete('/api/webhook/:channelId', async (req, res) => {
 });
 
 // ============================================
-// OAUTH CALLBACK
-// ============================================
-
-app.get('/oauth/callback', (req, res) => {
-  res.send(`
-    <html>
-      <body style="font-family: system-ui; padding: 40px; text-align: center;">
-        <h1>Servidor incorrecto</h1>
-        <p>Para generar tokens, ejecuta: <code>npm run auth</code></p>
-      </body>
-    </html>
-  `);
-});
-
-// ============================================
 // HEALTH CHECK
 // ============================================
 
@@ -188,22 +162,9 @@ async function start() {
     app.listen(PORT, () => {
       console.log(`\nServidor corriendo en http://localhost:${PORT}`);
       console.log('\nEndpoints disponibles:');
-      console.log('  --- Sources ---');
-      console.log('  GET    /api/sources           - Listar fuentes');
-      console.log('  POST   /api/sources           - Crear fuente');
-      console.log('  GET    /api/sources/:id       - Obtener fuente');
-      console.log('  PUT    /api/sources/:id       - Actualizar fuente');
-      console.log('  DELETE /api/sources/:id       - Eliminar fuente');
-      console.log('  --- Sync ---');
-      console.log('  POST   /api/sync              - Sincronizar todas las fuentes');
-      console.log('  POST   /api/sync/:sourceId    - Sincronizar fuente específica');
-      console.log('  GET    /api/sync/status       - Estado de sincronización');
-      console.log('  --- Calendar Output ---');
-      console.log('  GET    /api/calendar.ics      - Calendario combinado (ICAL)');
-      console.log('  GET    /api/events            - Eventos en JSON');
-      console.log('  --- Legacy ---');
       console.log('  POST   /api/webhook           - Receptor de notificaciones Google');
       console.log('  POST   /api/webhook/register  - Registrar webhook Google');
+      console.log('  DELETE /api/webhook/:id       - Cancelar webhook');
       console.log('  GET    /health                - Estado del servicio\n');
     });
   } catch (error) {
