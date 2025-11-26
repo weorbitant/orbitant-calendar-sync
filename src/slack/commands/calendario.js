@@ -130,7 +130,7 @@ function buildDayBlocks(emoji, label, date, events, sourceMap) {
     const title = event.summary || '(Sin título)';
     const source = sourceMap.get(event.source_id);
     const sourceIcon = getSourceIcon(source);
-    return `     ${time}  *${title}* ${sourceIcon}`;
+    return `• ${time}  *${title}* ${sourceIcon}`;
   });
 
   blocks.push({

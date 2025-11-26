@@ -121,8 +121,12 @@ export class ICalGenerator {
     const uid = event.external_id || uuidv4();
     vevent.updatePropertyWithValue('uid', uid);
 
-    // Summary
-    vevent.updatePropertyWithValue('summary', event.summary || '(Sin título)');
+    // Summary con prefijo de fuente
+    const sourcePrefix = source
+      ? (source.type === 'google' ? '[Google]' : `[${source.name}]`)
+      : '';
+    const summary = `${sourcePrefix} ${event.summary || '(Sin título)'}`.trim();
+    vevent.updatePropertyWithValue('summary', summary);
 
     // Description
     if (event.description) {
