@@ -3,6 +3,9 @@ import dotenv from 'dotenv';
 import { initializeDatabase, closeDatabase } from './config/database.js';
 import { getSyncScheduler } from './jobs/SyncScheduler.js';
 import GoogleCalendarService from './services/google-calendar.js';
+import slackApp from './slack/app.js';
+import { registerCalendariosCommand } from './slack/commands/calendarios.js';
+import { exchangeCodeForTokens } from './slack/actions/oauth.js';
 
 dotenv.config();
 
@@ -128,6 +131,123 @@ app.delete('/api/webhook/:channelId', async (req, res) => {
 });
 
 // ============================================
+// GOOGLE OAUTH CALLBACK
+// ============================================
+
+/**
+ * GET /auth/google/callback
+ * Callback para el flujo OAuth de Google Calendar
+ */
+app.get('/auth/google/callback', async (req, res) => {
+  const { code, error } = req.query;
+
+  if (error) {
+    return res.send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <title>Error de autenticacion</title>
+        <style>
+          body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; text-align: center; background: #f5f5f5; }
+          .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+          h1 { color: #dc3545; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Error de autenticacion</h1>
+          <p>${error}</p>
+          <p>Puedes cerrar esta ventana.</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
+  if (!code) {
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <title>Error</title>
+        <style>
+          body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; text-align: center; background: #f5f5f5; }
+          .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+          h1 { color: #dc3545; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Error</h1>
+          <p>No se recibio el codigo de autorizacion.</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
+  try {
+    const tokens = await exchangeCodeForTokens(code);
+
+    // TODO: En el futuro, guardar tokens en DB asociados al usuario de Slack
+    console.log('[OAuth] Tokens obtenidos exitosamente');
+    if (tokens.refresh_token) {
+      console.log('[OAuth] Refresh token:', tokens.refresh_token);
+      console.log('[OAuth] Anade esta linea a tu .env:');
+      console.log(`GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}`);
+    }
+
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <title>Conexion exitosa</title>
+        <style>
+          body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; text-align: center; background: #f5f5f5; }
+          .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+          h1 { color: #28a745; }
+          .icon { font-size: 48px; margin-bottom: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="icon">✅</div>
+          <h1>Conexion exitosa!</h1>
+          <p>Tu cuenta de Google Calendar ha sido vinculada correctamente.</p>
+          <p><strong>Puedes cerrar esta ventana y volver a Slack.</strong></p>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error('[OAuth] Error:', err.message);
+    res.status(500).send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <title>Error</title>
+        <style>
+          body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; text-align: center; background: #f5f5f5; }
+          .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+          h1 { color: #dc3545; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Error</h1>
+          <p>No se pudo completar la autenticacion: ${err.message}</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+});
+
+// ============================================
 // HEALTH CHECK
 // ============================================
 
@@ -149,7 +269,7 @@ app.get('/health', (req, res) => {
 async function start() {
   try {
     // Initialize database
-    console.log('Initializing database...');
+    console.log('Inicializando base de datos...');
     initializeDatabase();
 
     // Initialize legacy Google Calendar service (optional)
@@ -159,13 +279,23 @@ async function start() {
     const scheduler = getSyncScheduler();
     scheduler.start();
 
+    // Registrar comandos de Slack
+    registerCalendariosCommand(slackApp);
+
+    // Iniciar bot de Slack (Socket Mode)
+    await slackApp.start();
+    console.log('Bot de Slack iniciado (Socket Mode)');
+
     app.listen(PORT, () => {
       console.log(`\nServidor corriendo en http://localhost:${PORT}`);
       console.log('\nEndpoints disponibles:');
+      console.log('  GET    /auth/google/callback  - Callback OAuth Google');
       console.log('  POST   /api/webhook           - Receptor de notificaciones Google');
       console.log('  POST   /api/webhook/register  - Registrar webhook Google');
       console.log('  DELETE /api/webhook/:id       - Cancelar webhook');
-      console.log('  GET    /health                - Estado del servicio\n');
+      console.log('  GET    /health                - Estado del servicio');
+      console.log('\nComandos de Slack:');
+      console.log('  /calendarios                  - Gestionar calendarios\n');
     });
   } catch (error) {
     console.error('Error iniciando servidor:', error.message);
