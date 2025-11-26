@@ -1,5 +1,6 @@
-import { OAuthToken } from '../../models/OAuthToken.js';
-import GoogleCalendarService from '../../services/google-calendar.js';
+import { Event } from '../../models/Event.js';
+import { Source } from '../../models/Source.js';
+import { FeedToken } from '../../models/FeedToken.js';
 
 /**
  * Formatea una fecha para mostrar el dia de la semana y fecha
@@ -18,12 +19,35 @@ function formatDayHeader(date) {
 }
 
 /**
+ * Convierte una fecha a string en formato local YYYY-MM-DD
+ * @param {Date} date
+ * @returns {string}
+ */
+function toLocalDateString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Obtiene el icono de Slack segun el tipo de fuente
+ * @param {Object} source
+ * @returns {string}
+ */
+function getSourceIcon(source) {
+  if (!source) return '';
+  if (source.type === 'google') return ':google-calendar:';
+  return ':calendar:';
+}
+
+/**
  * Determina si un evento es de todo el dia
  * @param {Object} event
  * @returns {boolean}
  */
 function isAllDayEvent(event) {
-  return !event.start.dateTime && event.start.date;
+  return Boolean(event.all_day);
 }
 
 /**
@@ -32,11 +56,7 @@ function isAllDayEvent(event) {
  * @returns {Date}
  */
 function getEventStartDate(event) {
-  if (event.start.dateTime) {
-    return new Date(event.start.dateTime);
-  }
-  // Para eventos de todo el dia, la fecha viene como YYYY-MM-DD
-  return new Date(event.start.date + 'T00:00:00');
+  return new Date(event.start_datetime);
 }
 
 /**
@@ -48,9 +68,9 @@ function formatEventTime(event) {
   if (isAllDayEvent(event)) {
     return '🌅 Todo el día';
   }
-  const startDate = new Date(event.start.dateTime);
+  const startDate = getEventStartDate(event);
   const time = startDate.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-  return `🕐 ${time}`;
+  return time;
 }
 
 /**
@@ -64,12 +84,12 @@ function groupEventsByDay(events, today, tomorrow) {
   const todayEvents = [];
   const tomorrowEvents = [];
 
-  const todayStr = today.toISOString().split('T')[0];
-  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  const todayStr = toLocalDateString(today);
+  const tomorrowStr = toLocalDateString(tomorrow);
 
   for (const event of events) {
     const eventDate = getEventStartDate(event);
-    const eventDateStr = eventDate.toISOString().split('T')[0];
+    const eventDateStr = toLocalDateString(eventDate);
 
     if (eventDateStr === todayStr) {
       todayEvents.push(event);
@@ -87,9 +107,10 @@ function groupEventsByDay(events, today, tomorrow) {
  * @param {string} label - "HOY" o "MAÑANA"
  * @param {Date} date
  * @param {Array} events
+ * @param {Map} sourceMap - Mapa de source_id a Source
  * @returns {Array}
  */
-function buildDayBlocks(emoji, label, date, events) {
+function buildDayBlocks(emoji, label, date, events, sourceMap) {
   if (events.length === 0) {
     return [];
   }
@@ -107,7 +128,9 @@ function buildDayBlocks(emoji, label, date, events) {
   const eventLines = events.map(event => {
     const time = formatEventTime(event);
     const title = event.summary || '(Sin título)';
-    return `     ${time}  *${title}*`;
+    const source = sourceMap.get(event.source_id);
+    const sourceIcon = getSourceIcon(source);
+    return `     ${time}  *${title}* ${sourceIcon}`;
   });
 
   blocks.push({
@@ -131,40 +154,40 @@ export function registerCalendarioCommand(app) {
 
     const slackUserId = command.user_id;
 
-    // Verificar si el usuario tiene tokens en la BD
-    const tokenRecord = OAuthToken.findBySlackUserId(slackUserId, 'google');
-    const hasValidTokens = tokenRecord && tokenRecord.refreshToken;
-
-    if (!hasValidTokens) {
-      // No autenticado - indicar que use /ajustes
-      await client.chat.postEphemeral({
-        channel: command.channel_id,
-        user: slackUserId,
-        text: 'No tienes una cuenta de Google Calendar conectada.',
-        blocks: [
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: '⚠️ *No tienes una cuenta de Google Calendar conectada*\n\nUsa `/ajustes` para vincular tu cuenta de Google.'
-            }
-          },
-          { type: 'divider' },
-          {
-            type: 'context',
-            elements: [{
-              type: 'mrkdwn',
-              text: '📅 *Google Calendar Service*'
-            }]
-          }
-        ]
-      });
-      return;
-    }
-
     try {
-      const service = new GoogleCalendarService();
-      await service.initOAuthFromDB(slackUserId);
+      // Obtener todas las fuentes del usuario (Google + ICS)
+      const sources = Source.findBySlackUserId(slackUserId);
+
+      // Verificar si el usuario tiene fuentes configuradas
+      if (sources.length === 0) {
+        await client.chat.postEphemeral({
+          channel: command.channel_id,
+          user: slackUserId,
+          text: 'No tienes calendarios configurados.',
+          blocks: [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: '⚠️ *No tienes calendarios configurados*\n\nUsa `/ajustes` para vincular tu cuenta de Google o añadir calendarios ICS.'
+              }
+            },
+            { type: 'divider' },
+            {
+              type: 'context',
+              elements: [{
+                type: 'mrkdwn',
+                text: '📅 *Google Calendar Service*'
+              }]
+            }
+          ]
+        });
+        return;
+      }
+
+      // Crear mapa de fuentes para lookup rapido
+      const sourceMap = new Map(sources.map(s => [s.id, s]));
+      const sourceIds = sources.map(s => s.id);
 
       // Calcular rango: desde inicio de hoy hasta fin de manana
       const today = new Date();
@@ -176,18 +199,26 @@ export function registerCalendarioCommand(app) {
       const dayAfterTomorrow = new Date(today);
       dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
 
-      const { events } = await service.getEvents({
-        timeMin: today.toISOString(),
-        timeMax: dayAfterTomorrow.toISOString(),
-        singleEvents: true,
-        orderBy: 'startTime'
+      // Obtener eventos de todas las fuentes
+      const events = Event.findBySourceIds(sourceIds, {
+        startDate: toLocalDateString(today),
+        endDate: toLocalDateString(dayAfterTomorrow)
       });
 
       // Agrupar eventos por dia
       const { todayEvents, tomorrowEvents } = groupEventsByDay(events, today, tomorrow);
 
+      // Obtener URL del feed si existe
+      const feedToken = FeedToken.findBySlackUserId(slackUserId);
+      const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+      const feedUrl = feedToken ? `${baseUrl}/feed/${feedToken.token}/orbitando.ics` : null;
+
       // Si no hay eventos
       if (todayEvents.length === 0 && tomorrowEvents.length === 0) {
+        const noEventsFooter = feedUrl
+          ? `📅 *Google Calendar Service*\niCal: \`${feedUrl}\``
+          : '📅 *Google Calendar Service*';
+
         await client.chat.postEphemeral({
           channel: command.channel_id,
           user: slackUserId,
@@ -214,7 +245,7 @@ export function registerCalendarioCommand(app) {
               type: 'context',
               elements: [{
                 type: 'mrkdwn',
-                text: '📅 *Google Calendar Service*'
+                text: noEventsFooter
               }]
             }
           ]
@@ -237,7 +268,7 @@ export function registerCalendarioCommand(app) {
 
       // Eventos de hoy
       if (todayEvents.length > 0) {
-        const todayBlocks = buildDayBlocks('📌', 'HOY', today, todayEvents);
+        const todayBlocks = buildDayBlocks('📌', 'HOY', today, todayEvents, sourceMap);
         blocks.push(...todayBlocks);
       } else {
         blocks.push({
@@ -254,7 +285,7 @@ export function registerCalendarioCommand(app) {
 
       // Eventos de manana
       if (tomorrowEvents.length > 0) {
-        const tomorrowBlocks = buildDayBlocks('📆', 'MAÑANA', tomorrow, tomorrowEvents);
+        const tomorrowBlocks = buildDayBlocks('📆', 'MAÑANA', tomorrow, tomorrowEvents, sourceMap);
         blocks.push(...tomorrowBlocks);
       } else {
         blocks.push({
@@ -266,15 +297,19 @@ export function registerCalendarioCommand(app) {
         });
       }
 
-      // Footer con resumen
+      // Footer con resumen y URL del feed
       const totalEvents = todayEvents.length + tomorrowEvents.length;
+      const footerText = feedUrl
+        ? `*${totalEvents} evento(s)* en total\niCal: \`${feedUrl}\``
+        : `*${totalEvents} evento(s)* en total`;
+
       blocks.push(
         { type: 'divider' },
         {
           type: 'context',
           elements: [{
             type: 'mrkdwn',
-            text: `📊 *${totalEvents} evento(s)* en total  •  📅 *Google Calendar Service*`
+            text: footerText
           }]
         }
       );
