@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import dotenv from 'dotenv';
+import { OAuthToken } from '../models/OAuthToken.js';
 
 dotenv.config();
 
@@ -10,12 +11,61 @@ dotenv.config();
 class GoogleCalendarService {
   constructor(options = {}) {
     this.calendarId = options.calendarId || process.env.GOOGLE_CALENDAR_ID || 'primary';
+    this.slackUserId = options.slackUserId || null;
     this.auth = null;
     this.calendar = null;
   }
 
   /**
-   * Inicializa autenticación OAuth 2.0 con tokens existentes
+   * Inicializa autenticacion OAuth 2.0 con tokens de la BD
+   * @param {string} slackUserId - ID del usuario de Slack
+   */
+  async initOAuthFromDB(slackUserId) {
+    this.slackUserId = slackUserId;
+
+    const tokenRecord = OAuthToken.findBySlackUserId(slackUserId, 'google');
+    if (!tokenRecord) {
+      throw new Error(`No hay tokens OAuth para el usuario: ${slackUserId}`);
+    }
+
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.GOOGLE_REDIRECT_URI
+    );
+
+    oauth2Client.setCredentials(tokenRecord.toGoogleCredentials());
+
+    // Configurar renovacion automatica de tokens y persistencia
+    oauth2Client.on('tokens', (newTokens) => {
+      console.log(`[GoogleCalendar] Tokens renovados para usuario: ${slackUserId}`);
+
+      // Actualizar access_token en la BD
+      if (newTokens.access_token) {
+        OAuthToken.updateAccessToken(
+          slackUserId,
+          newTokens.access_token,
+          newTokens.expiry_date,
+          'google'
+        );
+      }
+
+      // Si hay nuevo refresh_token (raro pero posible)
+      if (newTokens.refresh_token) {
+        console.log('[GoogleCalendar] Nuevo refresh_token recibido - actualizando BD');
+        OAuthToken.updateRefreshToken(slackUserId, newTokens.refresh_token, 'google');
+      }
+    });
+
+    this.auth = oauth2Client;
+    this.calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    return this;
+  }
+
+  /**
+   * Inicializa autenticacion OAuth 2.0 con tokens proporcionados directamente
+   * (para compatibilidad o casos especiales)
    */
   async initOAuth(tokens = {}) {
     const oauth2Client = new google.auth.OAuth2(

@@ -1,13 +1,11 @@
 import express from 'express';
-import dotenv from 'dotenv';
 import { initializeDatabase, closeDatabase } from './config/database.js';
 import { getSyncScheduler } from './jobs/SyncScheduler.js';
 import GoogleCalendarService from './services/google-calendar.js';
 import slackApp from './slack/app.js';
 import { registerCalendariosCommand } from './slack/commands/calendarios.js';
-import { exchangeCodeForTokens } from './slack/actions/oauth.js';
-
-dotenv.config();
+import { exchangeCodeForTokens, validateOAuthState, getGoogleUserInfo } from './slack/actions/oauth.js';
+import { OAuthToken } from './models/OAuthToken.js';
 
 const app = express();
 app.use(express.json());
@@ -139,7 +137,13 @@ app.delete('/api/webhook/:channelId', async (req, res) => {
  * Callback para el flujo OAuth de Google Calendar
  */
 app.get('/auth/google/callback', async (req, res) => {
-  const { code, error } = req.query;
+  const { code, error, state } = req.query;
+
+  const errorPageStyle = `
+    body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; text-align: center; background: #f5f5f5; }
+    .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    h1 { color: #dc3545; }
+  `;
 
   if (error) {
     return res.send(`
@@ -148,11 +152,7 @@ app.get('/auth/google/callback', async (req, res) => {
       <head>
         <meta charset="utf-8">
         <title>Error de autenticacion</title>
-        <style>
-          body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; text-align: center; background: #f5f5f5; }
-          .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-          h1 { color: #dc3545; }
-        </style>
+        <style>${errorPageStyle}</style>
       </head>
       <body>
         <div class="container">
@@ -172,11 +172,7 @@ app.get('/auth/google/callback', async (req, res) => {
       <head>
         <meta charset="utf-8">
         <title>Error</title>
-        <style>
-          body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; text-align: center; background: #f5f5f5; }
-          .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-          h1 { color: #dc3545; }
-        </style>
+        <style>${errorPageStyle}</style>
       </head>
       <body>
         <div class="container">
@@ -188,16 +184,56 @@ app.get('/auth/google/callback', async (req, res) => {
     `);
   }
 
+  // Validar state
+  const stateData = validateOAuthState(state);
+  if (!stateData || !stateData.slackUserId) {
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <title>Sesion expirada</title>
+        <style>${errorPageStyle}</style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Sesion expirada</h1>
+          <p>El enlace de autorizacion ha expirado o es invalido.</p>
+          <p>Por favor, vuelve a Slack y ejecuta /calendario nuevamente.</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
   try {
+    // Intercambiar codigo por tokens
     const tokens = await exchangeCodeForTokens(code);
 
-    // TODO: En el futuro, guardar tokens en DB asociados al usuario de Slack
-    console.log('[OAuth] Tokens obtenidos exitosamente');
-    if (tokens.refresh_token) {
-      console.log('[OAuth] Refresh token:', tokens.refresh_token);
-      console.log('[OAuth] Anade esta linea a tu .env:');
-      console.log(`GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}`);
+    // Obtener email de Google
+    let googleEmail = null;
+    try {
+      const userInfo = await getGoogleUserInfo(tokens.access_token);
+      googleEmail = userInfo.email;
+    } catch (e) {
+      console.warn('[OAuth] No se pudo obtener email de Google:', e.message);
     }
+
+    // Guardar tokens en la base de datos
+    OAuthToken.upsert({
+      slack_user_id: stateData.slackUserId,
+      slack_team_id: stateData.slackTeamId,
+      slack_user_name: stateData.slackUserName,
+      provider: 'google',
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      token_type: tokens.token_type || 'Bearer',
+      scope: tokens.scope,
+      expires_at: tokens.expiry_date,
+      google_email: googleEmail
+    });
+
+    console.log(`[OAuth] Tokens guardados para usuario Slack: ${stateData.slackUserId} (${googleEmail || 'email desconocido'})`);
 
     res.send(`
       <!DOCTYPE html>
@@ -210,12 +246,14 @@ app.get('/auth/google/callback', async (req, res) => {
           .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
           h1 { color: #28a745; }
           .icon { font-size: 48px; margin-bottom: 20px; }
+          .email { background: #e9ecef; padding: 8px 16px; border-radius: 4px; display: inline-block; margin: 10px 0; }
         </style>
       </head>
       <body>
         <div class="container">
-          <div class="icon">✅</div>
+          <div class="icon">OK</div>
           <h1>Conexion exitosa!</h1>
+          ${googleEmail ? `<p class="email">${googleEmail}</p>` : ''}
           <p>Tu cuenta de Google Calendar ha sido vinculada correctamente.</p>
           <p><strong>Puedes cerrar esta ventana y volver a Slack.</strong></p>
         </div>
@@ -230,11 +268,7 @@ app.get('/auth/google/callback', async (req, res) => {
       <head>
         <meta charset="utf-8">
         <title>Error</title>
-        <style>
-          body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; text-align: center; background: #f5f5f5; }
-          .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-          h1 { color: #dc3545; }
-        </style>
+        <style>${errorPageStyle}</style>
       </head>
       <body>
         <div class="container">

@@ -49,3 +49,25 @@ CREATE TABLE IF NOT EXISTS sync_state (
 CREATE INDEX IF NOT EXISTS idx_events_source ON events(source_id);
 CREATE INDEX IF NOT EXISTS idx_events_start ON events(start_datetime);
 CREATE INDEX IF NOT EXISTS idx_sync_state_source ON sync_state(source_id);
+
+-- Tabla: oauth_tokens (tokens OAuth por usuario de Slack)
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slack_user_id TEXT NOT NULL,
+    slack_team_id TEXT,
+    slack_user_name TEXT,
+    provider TEXT NOT NULL DEFAULT 'google' CHECK(provider IN ('google', 'microsoft')),
+    access_token_encrypted TEXT NOT NULL,
+    refresh_token_encrypted TEXT NOT NULL,
+    token_type TEXT DEFAULT 'Bearer',
+    scope TEXT,
+    expires_at INTEGER,
+    google_email TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(slack_user_id, provider)
+);
+
+-- Indices para oauth_tokens
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_slack_user ON oauth_tokens(slack_user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_provider ON oauth_tokens(provider);
