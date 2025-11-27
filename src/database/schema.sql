@@ -65,10 +65,14 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
     scope TEXT,
     expires_at INTEGER,
     account_email TEXT,
+    timezone TEXT DEFAULT 'UTC',
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now')),
     UNIQUE(slack_user_id, provider)
 );
+
+-- Migracion: agregar columna timezone si no existe
+-- SQLite no soporta ADD COLUMN IF NOT EXISTS, se maneja en codigo
 
 -- Indices para oauth_tokens
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_slack_user ON oauth_tokens(slack_user_id);

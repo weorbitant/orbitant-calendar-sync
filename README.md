@@ -146,6 +146,6 @@ El servicio estará disponible en `http://localhost:3030`.
 
 ## 📄 Licencia
 
-MIT
+MIT - See LICENSE file for details.
 
 > Made with ❤️ by @GentooXativa

@@ -14,6 +14,7 @@ export class OAuthToken {
     this.scope = data.scope;
     this.expires_at = data.expires_at;
     this.account_email = data.account_email;
+    this.timezone = data.timezone || 'UTC';
     this.created_at = data.created_at;
     this.updated_at = data.updated_at;
 
@@ -198,6 +199,31 @@ export class OAuthToken {
   }
 
   /**
+   * Obtiene la timezone de un usuario (sin cargar tokens)
+   */
+  static getTimezone(slackUserId) {
+    const db = getDatabase();
+    const row = db.prepare(
+      'SELECT timezone FROM oauth_tokens WHERE slack_user_id = ? LIMIT 1'
+    ).get(slackUserId);
+    return row?.timezone || null;
+  }
+
+  /**
+   * Actualiza la timezone de un usuario
+   */
+  static updateTimezone(slackUserId, timezone) {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      UPDATE oauth_tokens
+      SET timezone = ?, updated_at = datetime('now')
+      WHERE slack_user_id = ?
+    `);
+    const result = stmt.run(timezone, slackUserId);
+    return result.changes > 0;
+  }
+
+  /**
    * Lista todos los usuarios con tokens (para admin, sin tokens sensibles)
    */
   static findAll() {
@@ -217,6 +243,7 @@ export class OAuthToken {
       slack_user_name: this.slack_user_name,
       provider: this.provider,
       account_email: this.account_email,
+      timezone: this.timezone,
       is_expired: this.isExpired,
       expires_at: this.expires_at,
       created_at: this.created_at,

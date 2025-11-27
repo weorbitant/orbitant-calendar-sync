@@ -427,11 +427,16 @@ app.get('/feed/:token/orbitando.ics', (req, res) => {
   // Update last used timestamp
   FeedToken.updateLastUsed(token);
 
+  // Get user timezone
+  const userTimezone = OAuthToken.getTimezone(feedToken.slack_user_id) || 'UTC';
+
   // Generate iCal feed for this user
   const generator = new ICalGenerator({
     calendarName: 'Mi Calendario Unificado'
   });
-  const icalContent = generator.generateForUser(feedToken.slack_user_id);
+  const icalContent = generator.generateForUser(feedToken.slack_user_id, {
+    timezone: userTimezone
+  });
 
   // Return as iCal
   res.set({

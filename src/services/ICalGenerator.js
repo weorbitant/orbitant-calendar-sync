@@ -41,13 +41,14 @@ export class ICalGenerator {
    * @param {string} slackUserId
    * @param {Object} options
    * @param {number} [options.year] - Year to filter (default: current year)
+   * @param {string} [options.timezone] - IANA timezone identifier (default: 'UTC')
    * @returns {string}
    */
   generateForUser(slackUserId, options = {}) {
     // Get all sources for this user
     const userSources = Source.findBySlackUserId(slackUserId);
     if (!userSources.length) {
-      return this.buildICalendar([], {});
+      return this.buildICalendar([], {}, options.timezone);
     }
 
     // Build sources map
@@ -67,7 +68,7 @@ export class ICalGenerator {
     // Get events from all user sources within the year
     const events = Event.findBySourceIds(sourceIds, { startDate, endDate });
 
-    return this.buildICalendar(events, sourcesMap);
+    return this.buildICalendar(events, sourcesMap, options.timezone);
   }
 
   /**
@@ -86,9 +87,10 @@ export class ICalGenerator {
    * Build the iCalendar structure
    * @param {Array} events
    * @param {Object} sources
+   * @param {string} [timezone] - IANA timezone identifier
    * @returns {string}
    */
-  buildICalendar(events, sources) {
+  buildICalendar(events, sources, timezone) {
     // Create vcalendar component
     const vcalendar = new ICAL.Component(['vcalendar', [], []]);
 
@@ -98,6 +100,11 @@ export class ICalGenerator {
     vcalendar.updatePropertyWithValue('calscale', 'GREGORIAN');
     vcalendar.updatePropertyWithValue('method', 'PUBLISH');
     vcalendar.updatePropertyWithValue('x-wr-calname', this.calendarName);
+
+    // Add timezone if provided
+    if (timezone) {
+      vcalendar.updatePropertyWithValue('x-wr-timezone', timezone);
+    }
 
     // Add events
     for (const event of events) {

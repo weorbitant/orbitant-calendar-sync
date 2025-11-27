@@ -1,33 +1,33 @@
 import { Event } from '../../models/Event.js';
 import { Source } from '../../models/Source.js';
 import { FeedToken } from '../../models/FeedToken.js';
+import { OAuthToken } from '../../models/OAuthToken.js';
+import {
+  fetchUserTimezone,
+  formatTimeInZone,
+  formatDateInZone,
+  getTodayInZone,
+  getDateRelativeToToday
+} from '../../utils/timezone.js';
+import { DateTime } from 'luxon';
 
 /**
  * Formatea una fecha para mostrar el dia de la semana y fecha
- * @param {Date} date
+ * @param {string} dateStr - Fecha en formato YYYY-MM-DD
+ * @param {string} timezone - IANA timezone identifier
  * @returns {string}
  */
-function formatDayHeader(date) {
-  const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-  const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+function formatDayHeader(dateStr, timezone) {
+  const dt = DateTime.fromISO(dateStr).setZone(timezone);
+  const dayName = dt.setLocale('es').toFormat('cccc');
+  const day = dt.day;
+  const month = dt.setLocale('es').toFormat('MMMM');
 
-  const dayName = dayNames[date.getDay()];
-  const day = date.getDate();
-  const month = monthNames[date.getMonth()];
+  // Capitalizar primera letra
+  const capitalizedDay = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+  const capitalizedMonth = month.charAt(0).toUpperCase() + month.slice(1);
 
-  return `${dayName}, ${day} de ${month}`;
-}
-
-/**
- * Convierte una fecha a string en formato local YYYY-MM-DD
- * @param {Date} date
- * @returns {string}
- */
-function toLocalDateString(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return `${capitalizedDay}, ${day} de ${capitalizedMonth}`;
 }
 
 /**
@@ -52,45 +52,32 @@ function isAllDayEvent(event) {
 }
 
 /**
- * Obtiene la fecha de inicio de un evento como Date
- * @param {Object} event
- * @returns {Date}
- */
-function getEventStartDate(event) {
-  return new Date(event.start_datetime);
-}
-
-/**
  * Formatea la hora de un evento
  * @param {Object} event
+ * @param {string} timezone - IANA timezone identifier
  * @returns {string}
  */
-function formatEventTime(event) {
+function formatEventTime(event, timezone) {
   if (isAllDayEvent(event)) {
     return '🌅 Todo el día';
   }
-  const startDate = getEventStartDate(event);
-  const time = startDate.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-  return time;
+  return formatTimeInZone(event.start_datetime, timezone, 'HH:mm');
 }
 
 /**
- * Agrupa eventos por dia (hoy o manana)
+ * Agrupa eventos por dia (hoy o manana) usando timezone del usuario
  * @param {Array} events
- * @param {Date} today
- * @param {Date} tomorrow
+ * @param {string} todayStr - Fecha de hoy en formato YYYY-MM-DD
+ * @param {string} tomorrowStr - Fecha de manana en formato YYYY-MM-DD
+ * @param {string} timezone - IANA timezone identifier
  * @returns {{ todayEvents: Array, tomorrowEvents: Array }}
  */
-function groupEventsByDay(events, today, tomorrow) {
+function groupEventsByDay(events, todayStr, tomorrowStr, timezone) {
   const todayEvents = [];
   const tomorrowEvents = [];
 
-  const todayStr = toLocalDateString(today);
-  const tomorrowStr = toLocalDateString(tomorrow);
-
   for (const event of events) {
-    const eventDate = getEventStartDate(event);
-    const eventDateStr = toLocalDateString(eventDate);
+    const eventDateStr = formatDateInZone(event.start_datetime, timezone);
 
     if (eventDateStr === todayStr) {
       todayEvents.push(event);
@@ -106,12 +93,13 @@ function groupEventsByDay(events, today, tomorrow) {
  * Construye los bloques de Slack para mostrar eventos de un dia
  * @param {string} emoji - Emoji para el encabezado
  * @param {string} label - "HOY" o "MAÑANA"
- * @param {Date} date
+ * @param {string} dateStr - Fecha en formato YYYY-MM-DD
  * @param {Array} events
  * @param {Map} sourceMap - Mapa de source_id a Source
+ * @param {string} timezone - IANA timezone identifier
  * @returns {Array}
  */
-function buildDayBlocks(emoji, label, date, events, sourceMap) {
+function buildDayBlocks(emoji, label, dateStr, events, sourceMap, timezone) {
   if (events.length === 0) {
     return [];
   }
@@ -121,13 +109,13 @@ function buildDayBlocks(emoji, label, date, events, sourceMap) {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `${emoji} *${label}*  •  _${formatDayHeader(date)}_`
+        text: `${emoji} *${label}*  •  _${formatDayHeader(dateStr, timezone)}_`
       }
     }
   ];
 
   const eventLines = events.map(event => {
-    const time = formatEventTime(event);
+    const time = formatEventTime(event, timezone);
     const title = event.summary || '(Sin título)';
     const source = sourceMap.get(event.source_id);
     const sourceIcon = getSourceIcon(source);
@@ -191,24 +179,28 @@ export function registerCalendarioCommand(app) {
       const sourceMap = new Map(sources.map(s => [s.id, s]));
       const sourceIds = sources.map(s => s.id);
 
-      // Calcular rango: desde inicio de hoy hasta fin de manana
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      // Obtener timezone del usuario (de BD o de Slack)
+      let userTimezone = OAuthToken.getTimezone(slackUserId);
+      if (!userTimezone) {
+        // Si no tiene timezone guardada, obtenerla de Slack y guardarla
+        userTimezone = await fetchUserTimezone(client, slackUserId);
+        OAuthToken.updateTimezone(slackUserId, userTimezone);
+        console.log(`[Slack] Timezone for user ${slackUserId}: ${userTimezone} (fetched from Slack)`);
+      }
 
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      const dayAfterTomorrow = new Date(today);
-      dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
+      // Calcular rango usando timezone del usuario
+      const todayStr = getTodayInZone(userTimezone);
+      const tomorrowStr = getDateRelativeToToday(userTimezone, 1);
+      const dayAfterTomorrowStr = getDateRelativeToToday(userTimezone, 2);
 
       // Obtener eventos de todas las fuentes
       const events = Event.findBySourceIds(sourceIds, {
-        startDate: toLocalDateString(today),
-        endDate: toLocalDateString(dayAfterTomorrow)
+        startDate: todayStr,
+        endDate: dayAfterTomorrowStr
       });
 
-      // Agrupar eventos por dia
-      const { todayEvents, tomorrowEvents } = groupEventsByDay(events, today, tomorrow);
+      // Agrupar eventos por dia usando timezone
+      const { todayEvents, tomorrowEvents } = groupEventsByDay(events, todayStr, tomorrowStr, userTimezone);
 
       // Obtener URL del feed si existe
       const feedToken = FeedToken.findBySlackUserId(slackUserId);
@@ -270,7 +262,7 @@ export function registerCalendarioCommand(app) {
 
       // Eventos de hoy
       if (todayEvents.length > 0) {
-        const todayBlocks = buildDayBlocks('📌', 'HOY', today, todayEvents, sourceMap);
+        const todayBlocks = buildDayBlocks('📌', 'HOY', todayStr, todayEvents, sourceMap, userTimezone);
         blocks.push(...todayBlocks);
       } else {
         blocks.push({
@@ -287,7 +279,7 @@ export function registerCalendarioCommand(app) {
 
       // Eventos de manana
       if (tomorrowEvents.length > 0) {
-        const tomorrowBlocks = buildDayBlocks('📆', 'MAÑANA', tomorrow, tomorrowEvents, sourceMap);
+        const tomorrowBlocks = buildDayBlocks('📆', 'MAÑANA', tomorrowStr, tomorrowEvents, sourceMap, userTimezone);
         blocks.push(...tomorrowBlocks);
       } else {
         blocks.push({
