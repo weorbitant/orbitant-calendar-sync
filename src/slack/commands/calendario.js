@@ -181,11 +181,20 @@ export function registerCalendarioCommand(app) {
 
       // Obtener timezone del usuario (de BD o de Slack)
       let userTimezone = OAuthToken.getTimezone(slackUserId);
-      if (!userTimezone) {
-        // Si no tiene timezone guardada, obtenerla de Slack y guardarla
-        userTimezone = await fetchUserTimezone(client, slackUserId);
-        OAuthToken.updateTimezone(slackUserId, userTimezone);
-        console.log(`[Slack] Timezone for user ${slackUserId}: ${userTimezone} (fetched from Slack)`);
+
+      // Si no tiene timezone o tiene el default 'UTC', obtenerlo de Slack
+      if (!userTimezone || userTimezone === 'UTC') {
+        const slackTimezone = await fetchUserTimezone(client, slackUserId);
+        if (slackTimezone && slackTimezone !== 'UTC') {
+          // Solo actualizar si Slack devuelve un timezone diferente a UTC
+          userTimezone = slackTimezone;
+          OAuthToken.updateTimezone(slackUserId, userTimezone);
+          console.log(`[Slack] Timezone for user ${slackUserId}: ${userTimezone} (updated from Slack)`);
+        } else {
+          // Slack devolvió UTC o error - mantener lo que tenemos
+          userTimezone = userTimezone || 'UTC';
+          console.log(`[Slack] Timezone for user ${slackUserId}: ${userTimezone} (from Slack API)`);
+        }
       }
 
       // Calcular rango usando timezone del usuario

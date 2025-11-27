@@ -205,6 +205,13 @@ export function registerSourceActions(app) {
         color
       }, slackUserId);
 
+      // Sincronizar todos los calendarios del usuario
+      const { getSyncService } = await import('../../services/SyncService.js');
+      const syncService = getSyncService();
+      syncService.syncUserSources(slackUserId).catch(err => {
+        console.error('[Sources] Error syncing user sources:', err.message);
+      });
+
       // Notificar al usuario
       await client.chat.postMessage({
         channel: slackUserId,

@@ -137,6 +137,33 @@ export class SyncService {
   }
 
   /**
+   * Sync all sources for a specific user
+   * @param {string} slackUserId
+   * @returns {Promise<Object>}
+   */
+  async syncUserSources(slackUserId) {
+    const sources = Source.findBySlackUserId(slackUserId);
+    const enabledSources = sources.filter(s => s.enabled);
+
+    console.log(`[SyncService] Syncing ${enabledSources.length} sources for user ${slackUserId}`);
+
+    const results = { success: [], failed: [] };
+
+    for (const source of enabledSources) {
+      try {
+        const result = await this.syncSource(source.id);
+        results.success.push({ sourceId: source.id, sourceName: source.name, ...result });
+      } catch (error) {
+        console.error(`[SyncService] Failed to sync source ${source.id}:`, error.message);
+        results.failed.push({ sourceId: source.id, sourceName: source.name, error: error.message });
+      }
+    }
+
+    console.log(`[SyncService] User ${slackUserId} sync completed: ${results.success.length} success, ${results.failed.length} failed`);
+    return results;
+  }
+
+  /**
    * Get sync status for all sources
    * @returns {Array}
    */

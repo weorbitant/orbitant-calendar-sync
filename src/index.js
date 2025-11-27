@@ -11,6 +11,7 @@ import { OAuthToken } from './models/OAuthToken.js';
 import { FeedToken } from './models/FeedToken.js';
 import { ICalGenerator } from './services/ICalGenerator.js';
 import { Source } from './models/Source.js';
+import { getSyncService } from './services/SyncService.js';
 
 const app = express();
 app.use(express.json());
@@ -138,6 +139,12 @@ app.get('/auth/google/callback', async (req, res) => {
       }, stateData.slackUserId);
       console.log(`[OAuth] Created Google Calendar source for user: ${stateData.slackUserId}`);
     }
+
+    // Sincronizar todos los calendarios del usuario
+    const syncService = getSyncService();
+    syncService.syncUserSources(stateData.slackUserId).catch(err => {
+      console.error('[OAuth] Error syncing user sources:', err.message);
+    });
 
     // Actualizar mensaje de Slack con resultado
     if (stateData.responseUrl) {
@@ -333,6 +340,12 @@ app.get('/auth/azure/callback', async (req, res) => {
       }, stateData.slackUserId);
       console.log(`[OAuth Microsoft] Created Microsoft Calendar source for user: ${stateData.slackUserId}`);
     }
+
+    // Sincronizar todos los calendarios del usuario
+    const syncService = getSyncService();
+    syncService.syncUserSources(stateData.slackUserId).catch(err => {
+      console.error('[OAuth Microsoft] Error syncing user sources:', err.message);
+    });
 
     // Actualizar mensaje de Slack con resultado
     if (stateData.responseUrl) {
