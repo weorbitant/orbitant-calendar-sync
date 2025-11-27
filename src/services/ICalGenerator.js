@@ -123,7 +123,7 @@ export class ICalGenerator {
 
     // Summary con prefijo de fuente
     const sourcePrefix = source
-      ? (source.type === 'google' ? '[Google]' : `[${source.name}]`)
+      ? (source.type === 'google' ? '[Google]' : source.type === 'microsoft' ? '[Outlook]' : `[${source.name}]`)
       : '';
     const summary = `${sourcePrefix} ${event.summary || '(Sin título)'}`.trim();
     vevent.updatePropertyWithValue('summary', summary);
@@ -156,9 +156,24 @@ export class ICalGenerator {
     // Recurrence rule
     if (event.recurrence) {
       try {
-        const rruleStr = event.recurrence.replace(/^RRULE:?/i, '');
-        const rrule = ICAL.Recur.fromString(rruleStr);
-        vevent.updatePropertyWithValue('rrule', rrule);
+        let rruleStr = event.recurrence;
+
+        // Detect if it's Microsoft Graph JSON format (starts with '{')
+        if (rruleStr.trim().startsWith('{')) {
+          rruleStr = this.convertMicrosoftRecurrence(rruleStr);
+          if (!rruleStr) {
+            // Skip if conversion failed
+            console.warn(`[ICalGenerator] Could not convert Microsoft recurrence for event ${event.id}`);
+          }
+        } else {
+          // Standard RRULE format - strip prefix if present
+          rruleStr = rruleStr.replace(/^RRULE:?/i, '');
+        }
+
+        if (rruleStr) {
+          const rrule = ICAL.Recur.fromString(rruleStr);
+          vevent.updatePropertyWithValue('rrule', rrule);
+        }
       } catch {
         // Skip invalid recurrence rules
         console.warn(`[ICalGenerator] Invalid recurrence rule for event ${event.id}: ${event.recurrence}`);
@@ -187,6 +202,68 @@ export class ICalGenerator {
     }
 
     return vevent;
+  }
+
+  /**
+   * Convert Microsoft Graph recurrence format to RRULE string
+   * @param {string} jsonStr - JSON string from Microsoft Graph API
+   * @returns {string|null} RRULE string or null if conversion fails
+   */
+  convertMicrosoftRecurrence(jsonStr) {
+    try {
+      const recurrence = JSON.parse(jsonStr);
+      const pattern = recurrence.pattern;
+
+      if (!pattern) return null;
+
+      const freqMap = {
+        'daily': 'DAILY',
+        'weekly': 'WEEKLY',
+        'absoluteMonthly': 'MONTHLY',
+        'relativeMonthly': 'MONTHLY',
+        'absoluteYearly': 'YEARLY',
+        'relativeYearly': 'YEARLY'
+      };
+
+      const freq = freqMap[pattern.type];
+      if (!freq) return null;
+
+      let rrule = `FREQ=${freq}`;
+
+      if (pattern.interval && pattern.interval > 1) {
+        rrule += `;INTERVAL=${pattern.interval}`;
+      }
+
+      if (pattern.daysOfWeek?.length) {
+        const dayMap = {
+          sunday: 'SU', monday: 'MO', tuesday: 'TU',
+          wednesday: 'WE', thursday: 'TH', friday: 'FR', saturday: 'SA'
+        };
+        const days = pattern.daysOfWeek.map(d => dayMap[d]).filter(Boolean).join(',');
+        if (days) {
+          rrule += `;BYDAY=${days}`;
+        }
+      }
+
+      if (pattern.dayOfMonth) {
+        rrule += `;BYMONTHDAY=${pattern.dayOfMonth}`;
+      }
+
+      if (pattern.month) {
+        rrule += `;BYMONTH=${pattern.month}`;
+      }
+
+      if (recurrence.range?.endDate && recurrence.range.type === 'endDate') {
+        const until = recurrence.range.endDate.replace(/-/g, '');
+        rrule += `;UNTIL=${until}`;
+      } else if (recurrence.range?.numberOfOccurrences) {
+        rrule += `;COUNT=${recurrence.range.numberOfOccurrences}`;
+      }
+
+      return rrule;
+    } catch {
+      return null;
+    }
   }
 
   /**

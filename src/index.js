@@ -7,6 +7,7 @@ import { registerAjustesCommand } from './slack/commands/ajustes.js';
 import { registerCalendarioCommand } from './slack/commands/calendario.js';
 import { registerSourceActions } from './slack/actions/sources.js';
 import { exchangeCodeForTokens, validateOAuthState, getGoogleUserInfo } from './slack/actions/oauth.js';
+import { exchangeMicrosoftCodeForTokens, validateMicrosoftOAuthState, getMicrosoftUserInfo } from './slack/actions/microsoft-oauth.js';
 import { OAuthToken } from './models/OAuthToken.js';
 import { FeedToken } from './models/FeedToken.js';
 import { ICalGenerator } from './services/ICalGenerator.js';
@@ -235,7 +236,7 @@ app.get('/auth/google/callback', async (req, res) => {
       token_type: tokens.token_type || 'Bearer',
       scope: tokens.scope,
       expires_at: tokens.expiry_date,
-      google_email: googleEmail
+      account_email: googleEmail
     });
 
     console.log(`[OAuth] Tokens guardados para usuario Slack: ${stateData.slackUserId} (${googleEmail || 'email desconocido'})`);
@@ -282,6 +283,174 @@ app.get('/auth/google/callback', async (req, res) => {
     `);
   } catch (err) {
     console.error('[OAuth] Error:', err.message);
+    res.status(500).send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <title>Error</title>
+        <style>${errorPageStyle}</style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Error</h1>
+          <p>No se pudo completar la autenticacion: ${err.message}</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+});
+
+// ============================================
+// MICROSOFT OAUTH CALLBACK
+// ============================================
+
+/**
+ * GET /auth/azure/callback
+ * Callback para el flujo OAuth de Microsoft/Outlook Calendar
+ */
+app.get('/auth/azure/callback', async (req, res) => {
+  const { code, error, error_description, state } = req.query;
+
+  const errorPageStyle = `
+    body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; text-align: center; background: #f5f5f5; }
+    .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    h1 { color: #dc3545; }
+  `;
+
+  if (error) {
+    return res.send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <title>Error de autenticacion</title>
+        <style>${errorPageStyle}</style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Error de autenticacion</h1>
+          <p>${error_description || error}</p>
+          <p>Puedes cerrar esta ventana.</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
+  if (!code) {
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <title>Error</title>
+        <style>${errorPageStyle}</style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Error</h1>
+          <p>No se recibio el codigo de autorizacion.</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
+  // Validar state
+  const stateData = validateMicrosoftOAuthState(state);
+  if (!stateData || !stateData.slackUserId) {
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <title>Sesion expirada</title>
+        <style>${errorPageStyle}</style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Sesion expirada</h1>
+          <p>El enlace de autorizacion ha expirado o es invalido.</p>
+          <p>Por favor, vuelve a Slack y ejecuta /ajustes nuevamente.</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
+  try {
+    // Intercambiar codigo por tokens
+    const tokens = await exchangeMicrosoftCodeForTokens(code);
+
+    // Obtener email de Microsoft
+    let microsoftEmail = null;
+    try {
+      const userInfo = await getMicrosoftUserInfo(tokens.access_token);
+      microsoftEmail = userInfo.email;
+    } catch (e) {
+      console.warn('[OAuth Microsoft] No se pudo obtener email:', e.message);
+    }
+
+    // Guardar tokens en la base de datos
+    OAuthToken.upsert({
+      slack_user_id: stateData.slackUserId,
+      slack_team_id: stateData.slackTeamId,
+      slack_user_name: stateData.slackUserName,
+      provider: 'microsoft',
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      token_type: tokens.token_type || 'Bearer',
+      scope: tokens.scope,
+      expires_at: tokens.expiry_date,
+      account_email: microsoftEmail
+    });
+
+    console.log(`[OAuth Microsoft] Tokens guardados para usuario Slack: ${stateData.slackUserId} (${microsoftEmail || 'email desconocido'})`);
+
+    // Create Microsoft Calendar source for this user (if not exists)
+    const existingMicrosoftSources = Source.findBySlackUserId(stateData.slackUserId)
+      .filter(s => s.type === 'microsoft');
+
+    if (existingMicrosoftSources.length === 0) {
+      Source.createForUser({
+        name: `Outlook Calendar (${microsoftEmail || 'primary'})`,
+        type: 'microsoft',
+        config: { calendarId: 'primary' },
+        enabled: 1,
+        color: '#0078D4' // Azul de Microsoft
+      }, stateData.slackUserId);
+      console.log(`[OAuth Microsoft] Created Microsoft Calendar source for user: ${stateData.slackUserId}`);
+    }
+
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <title>Conexion exitosa</title>
+        <style>
+          body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; text-align: center; background: #f5f5f5; }
+          .container { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+          h1 { color: #0078D4; }
+          .icon { font-size: 48px; margin-bottom: 20px; }
+          .email { background: #e9ecef; padding: 8px 16px; border-radius: 4px; display: inline-block; margin: 10px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="icon">OK</div>
+          <h1>Conexion exitosa!</h1>
+          ${microsoftEmail ? `<p class="email">${microsoftEmail}</p>` : ''}
+          <p>Tu cuenta de Microsoft Outlook Calendar ha sido vinculada correctamente.</p>
+          <p><strong>Puedes cerrar esta ventana y volver a Slack.</strong></p>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error('[OAuth Microsoft] Error:', err.message);
     res.status(500).send(`
       <!DOCTYPE html>
       <html lang="es">
@@ -379,7 +548,8 @@ async function start() {
     app.listen(PORT, () => {
       console.log(`\nServidor corriendo en http://localhost:${PORT}`);
       console.log('\nEndpoints disponibles:');
-      console.log('  GET    /auth/google/callback  - Callback OAuth Google');
+      console.log('  GET    /auth/google/callback   - Callback OAuth Google');
+      console.log('  GET    /auth/azure/callback    - Callback OAuth Microsoft');
       console.log('  POST   /api/google/webhook           - Receptor de notificaciones Google');
       console.log('  POST   /api/google/webhook/register  - Registrar webhook Google');
       console.log('  DELETE /api/google/webhook/:id       - Cancelar webhook');

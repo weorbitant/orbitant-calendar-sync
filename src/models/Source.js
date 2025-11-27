@@ -176,6 +176,22 @@ export class Source {
   }
 
   /**
+   * Elimina todos los sources de un proveedor para un usuario
+   * Util para desconectar una cuenta OAuth completa
+   * @param {string} slackUserId - ID del usuario Slack
+   * @param {string} provider - 'google' | 'microsoft'
+   * @returns {number} - Cantidad de sources eliminados
+   */
+  static deleteByProviderForUser(slackUserId, provider) {
+    const db = getDatabase();
+    const stmt = db.prepare(
+      'DELETE FROM sources WHERE slack_user_id = ? AND type = ?'
+    );
+    const result = stmt.run(slackUserId, provider);
+    return result.changes;
+  }
+
+  /**
    * Actualiza un source verificando propiedad del usuario
    * @param {number} id
    * @param {string} slackUserId

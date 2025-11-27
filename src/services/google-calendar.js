@@ -29,7 +29,7 @@ class GoogleCalendarService {
       console.error(`[GoogleCalendar] No tokens found for user: ${slackUserId}`);
       throw new Error(`No hay tokens OAuth para el usuario: ${slackUserId}`);
     }
-    console.log(`[GoogleCalendar] Found tokens for: ${tokenRecord.google_email || 'unknown email'}`);
+    console.log(`[GoogleCalendar] Found tokens for: ${tokenRecord.account_email || 'unknown email'}`);
 
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,

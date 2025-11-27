@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
     token_type TEXT DEFAULT 'Bearer',
     scope TEXT,
     expires_at INTEGER,
-    google_email TEXT,
+    account_email TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now')),
     UNIQUE(slack_user_id, provider)

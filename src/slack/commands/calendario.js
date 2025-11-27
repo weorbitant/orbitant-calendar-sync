@@ -38,6 +38,7 @@ function toLocalDateString(date) {
 function getSourceIcon(source) {
   if (!source) return '';
   if (source.type === 'google') return ':google-calendar:';
+  if (source.type === 'microsoft') return ':ms_outlook:';
   return ':calendar:';
 }
 

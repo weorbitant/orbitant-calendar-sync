@@ -1,4 +1,5 @@
 import GoogleCalendarProvider from '../providers/GoogleCalendarProvider.js';
+import MicrosoftCalendarProvider from '../providers/MicrosoftCalendarProvider.js';
 import ICalRemoteProvider from '../providers/ICalRemoteProvider.js';
 import ICalLocalProvider from '../providers/ICalLocalProvider.js';
 
@@ -9,6 +10,8 @@ export function createProvider(source) {
   switch (source.type) {
   case 'google':
     return new GoogleCalendarProvider(source);
+  case 'microsoft':
+    return new MicrosoftCalendarProvider(source);
   case 'ical_remote':
     return new ICalRemoteProvider(source);
   case 'ical_local':

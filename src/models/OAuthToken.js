@@ -13,7 +13,7 @@ export class OAuthToken {
     this.token_type = data.token_type || 'Bearer';
     this.scope = data.scope;
     this.expires_at = data.expires_at;
-    this.google_email = data.google_email;
+    this.account_email = data.account_email;
     this.created_at = data.created_at;
     this.updated_at = data.updated_at;
 
@@ -120,7 +120,7 @@ export class OAuthToken {
       INSERT INTO oauth_tokens (
         slack_user_id, slack_team_id, slack_user_name, provider,
         access_token_encrypted, refresh_token_encrypted,
-        token_type, scope, expires_at, google_email
+        token_type, scope, expires_at, account_email
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(slack_user_id, provider) DO UPDATE SET
@@ -131,7 +131,7 @@ export class OAuthToken {
         token_type = excluded.token_type,
         scope = excluded.scope,
         expires_at = excluded.expires_at,
-        google_email = COALESCE(excluded.google_email, oauth_tokens.google_email),
+        account_email = COALESCE(excluded.account_email, oauth_tokens.account_email),
         updated_at = datetime('now')
     `);
 
@@ -145,7 +145,7 @@ export class OAuthToken {
       data.token_type || 'Bearer',
       data.scope || null,
       data.expires_at || null,
-      data.google_email || null
+      data.account_email || null
     );
 
     return OAuthToken.findBySlackUserId(data.slack_user_id, data.provider || 'google');
@@ -203,7 +203,7 @@ export class OAuthToken {
   static findAll() {
     const db = getDatabase();
     const rows = db.prepare(
-      `SELECT id, slack_user_id, slack_user_name, provider, google_email,
+      `SELECT id, slack_user_id, slack_user_name, provider, account_email,
               expires_at, created_at, updated_at
        FROM oauth_tokens ORDER BY created_at DESC`
     ).all();
@@ -216,7 +216,7 @@ export class OAuthToken {
       slack_user_id: this.slack_user_id,
       slack_user_name: this.slack_user_name,
       provider: this.provider,
-      google_email: this.google_email,
+      account_email: this.account_email,
       is_expired: this.isExpired,
       expires_at: this.expires_at,
       created_at: this.created_at,

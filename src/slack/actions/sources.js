@@ -7,7 +7,9 @@ import { buildSourceModal, buildDeleteConfirmModal, SOURCE_COLORS } from '../mod
  * @returns {Array} Bloques de Slack
  */
 export function buildSourcesBlocks(slackUserId) {
-  const sources = Source.findBySlackUserId(slackUserId);
+  // Filtrar solo calendarios ICS (excluir google y microsoft que se muestran aparte)
+  const sources = Source.findBySlackUserId(slackUserId)
+    .filter(s => s.type !== 'google' && s.type !== 'microsoft');
 
   const blocks = [
     { type: 'divider' },
@@ -15,7 +17,7 @@ export function buildSourcesBlocks(slackUserId) {
       type: 'header',
       text: {
         type: 'plain_text',
-        text: 'Calendarios ICS',
+        text: 'Calendarios',
         emoji: true
       }
     }

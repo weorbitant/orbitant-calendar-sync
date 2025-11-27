@@ -1,7 +1,9 @@
 import { getGoogleAuthUrl } from '../actions/oauth.js';
+import { getMicrosoftAuthUrl } from '../actions/microsoft-oauth.js';
 import { OAuthToken } from '../../models/OAuthToken.js';
 import { FeedToken } from '../../models/FeedToken.js';
-import GoogleCalendarService from '../../services/google-calendar.js';
+import { Source } from '../../models/Source.js';
+import { SyncService } from '../../services/SyncService.js';
 import { buildSourcesBlocks } from '../actions/sources.js';
 
 /**
@@ -97,7 +99,7 @@ function buildFooterBlocks(userId, lastSyncDate) {
       type: 'context',
       elements: [{
         type: 'mrkdwn',
-        text: `📅 *Google Calendar Service* • Ultima sync: ${syncText}`
+        text: `📅 *Calendar Service* • Ultima sync: ${syncText}`
       }]
     }
   ];
@@ -118,6 +120,116 @@ function buildFooterBlocks(userId, lastSyncDate) {
 }
 
 /**
+ * Construye los bloques de conexion de Google Calendar
+ */
+function buildGoogleConnectionBlocks(slackUserId, slackTeamId, userName) {
+  const tokenRecord = OAuthToken.findBySlackUserId(slackUserId, 'google');
+  const hasValidTokens = tokenRecord && tokenRecord.refreshToken;
+
+  if (hasValidTokens) {
+    return [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `:google-calendar: *Cuenta:* ${tokenRecord.account_email || 'No disponible'}`
+        },
+        accessory: {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Desconectar', emoji: true },
+          style: 'danger',
+          action_id: 'disconnect_google',
+          confirm: {
+            title: { type: 'plain_text', text: 'Desconectar Google Calendar' },
+            text: { type: 'mrkdwn', text: 'Esto eliminara la conexion con tu cuenta de Google.\n\nEstas seguro?' },
+            confirm: { type: 'plain_text', text: 'Si, desconectar' },
+            deny: { type: 'plain_text', text: 'Cancelar' }
+          }
+        }
+      }
+    ];
+  } else {
+    const { url: authUrl } = getGoogleAuthUrl({
+      id: slackUserId,
+      teamId: slackTeamId,
+      name: userName
+    });
+
+    return [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: ':google-calendar: \nConecta tu cuenta de Google para sincronizar tus eventos.'
+        },
+        accessory: {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Conectar', emoji: true },
+          style: 'primary',
+          action_id: 'google_oauth_start',
+          url: authUrl
+        }
+      }
+    ];
+  }
+}
+
+/**
+ * Construye los bloques de conexion de Microsoft Outlook
+ */
+async function buildMicrosoftConnectionBlocks(slackUserId, slackTeamId, userName) {
+  const tokenRecord = OAuthToken.findBySlackUserId(slackUserId, 'microsoft');
+  const hasValidTokens = tokenRecord && tokenRecord.refreshToken;
+
+  if (hasValidTokens) {
+    return [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `:ms_outlook: *Cuenta:* ${tokenRecord.account_email || 'No disponible'}`
+        },
+        accessory: {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Desconectar', emoji: true },
+          style: 'danger',
+          action_id: 'disconnect_microsoft',
+          confirm: {
+            title: { type: 'plain_text', text: 'Desconectar Microsoft Outlook' },
+            text: { type: 'mrkdwn', text: 'Esto eliminara la conexion con tu cuenta de Microsoft.\n\nEstas seguro?' },
+            confirm: { type: 'plain_text', text: 'Si, desconectar' },
+            deny: { type: 'plain_text', text: 'Cancelar' }
+          }
+        }
+      }
+    ];
+  } else {
+    const { url: authUrl } = await getMicrosoftAuthUrl({
+      id: slackUserId,
+      teamId: slackTeamId,
+      name: userName
+    });
+
+    return [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: ':ms_outlook: \nConecta tu cuenta de Microsoft para sincronizar tus eventos.'
+        },
+        accessory: {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Conectar', emoji: true },
+          style: 'primary',
+          action_id: 'microsoft_oauth_start',
+          url: authUrl
+        }
+      }
+    ];
+  }
+}
+
+/**
  * Registra el comando /ajustes en el bot de Slack
  * @param {import('@slack/bolt').App} app - Instancia del bot de Slack
  */
@@ -127,174 +239,81 @@ export function registerAjustesCommand(app) {
 
     const slackUserId = command.user_id;
     const slackTeamId = command.team_id;
+    const userName = command.user_name;
 
-    // Verificar si el usuario tiene tokens en la BD
-    const tokenRecord = OAuthToken.findBySlackUserId(slackUserId, 'google');
-    const hasValidTokens = tokenRecord && tokenRecord.refreshToken;
+    // Construir bloques de conexion de proveedores
+    const googleBlocks = buildGoogleConnectionBlocks(slackUserId, slackTeamId, userName);
+    const microsoftBlocks = await buildMicrosoftConnectionBlocks(slackUserId, slackTeamId, userName);
 
-    if (hasValidTokens) {
-      // Ya autenticado - mostrar opciones de calendario
-      const footerBlocks = buildFooterBlocks(slackUserId, tokenRecord.updated_at);
-      const sourcesBlocks = buildSourcesBlocks(slackUserId);
-      const feedBlocks = buildFeedBlocks(slackUserId);
+    // Verificar si hay al menos un proveedor conectado para el footer
+    const googleToken = OAuthToken.findBySlackUserId(slackUserId, 'google');
+    const microsoftToken = OAuthToken.findBySlackUserId(slackUserId, 'microsoft');
+    const lastSyncDate = googleToken?.updated_at || microsoftToken?.updated_at || null;
 
-      await client.chat.postEphemeral({
-        channel: command.channel_id,
-        user: slackUserId,
-        text: 'Ajustes de Calendario',
-        blocks: [
-          {
-            type: 'header',
-            text: {
-              type: 'plain_text',
-              text: 'Ajustes de Calendario',
-              emoji: true
-            }
-          },
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: `*Google Calendar conectado*\n\n*Cuenta:* ${tokenRecord.google_email || 'No disponible'}`
-            },
-            accessory: {
-              type: 'image',
-              image_url: 'https://www.gstatic.com/images/branding/product/2x/calendar_2020q4_48dp.png',
-              alt_text: 'Google Calendar'
-            }
-          },
-          {
-            type: 'context',
-            elements: [
-              {
-                type: 'mrkdwn',
-                text: `_Vinculado desde: ${new Date(tokenRecord.created_at).toLocaleDateString('es-ES')}_`
-              }
-            ]
-          },
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: '*Tip:* Usa `/calendario` para ver tus eventos de hoy y manana'
-            }
-          },
-          {
-            type: 'actions',
-            elements: [
-              {
-                type: 'button',
-                text: {
-                  type: 'plain_text',
-                  text: 'Desconectar cuenta',
-                  emoji: true
-                },
-                style: 'danger',
-                action_id: 'disconnect_google',
-                confirm: {
-                  title: {
-                    type: 'plain_text',
-                    text: 'Desconectar Google Calendar'
-                  },
-                  text: {
-                    type: 'mrkdwn',
-                    text: 'Esto eliminara la conexion con tu cuenta de Google.\n\nEstas seguro que deseas continuar?'
-                  },
-                  confirm: {
-                    type: 'plain_text',
-                    text: 'Si, desconectar'
-                  },
-                  deny: {
-                    type: 'plain_text',
-                    text: 'Cancelar'
-                  }
-                }
-              }
-            ]
-          },
-          ...feedBlocks,
-          ...sourcesBlocks,
-          ...footerBlocks
-        ]
-      });
-    } else {
-      // No autenticado - mostrar boton de OAuth
-      const { url: authUrl } = getGoogleAuthUrl({
-        id: slackUserId,
-        teamId: slackTeamId,
-        name: command.user_name
-      });
+    const footerBlocks = buildFooterBlocks(slackUserId, lastSyncDate);
+    const sourcesBlocks = buildSourcesBlocks(slackUserId);
+    const feedBlocks = (googleToken || microsoftToken) ? buildFeedBlocks(slackUserId) : [];
 
-      const footerBlocks = buildFooterBlocks(slackUserId, null);
-      const sourcesBlocks = buildSourcesBlocks(slackUserId);
-
-      await client.chat.postEphemeral({
-        channel: command.channel_id,
-        user: slackUserId,
-        text: 'Conectar Google Calendar',
-        blocks: [
-          {
-            type: 'header',
-            text: {
-              type: 'plain_text',
-              text: 'Ajustes de Calendario',
-              emoji: true
-            }
-          },
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: '*Vincular cuenta de Google*\n\nPara ver tus eventos del calendario de Google, primero necesitas conectar tu cuenta.'
-            },
-            accessory: {
-              type: 'image',
-              image_url: 'https://www.gstatic.com/images/branding/product/2x/calendar_2020q4_48dp.png',
-              alt_text: 'Google Calendar'
-            }
-          },
-          {
-            type: 'actions',
-            elements: [
-              {
-                type: 'button',
-                text: {
-                  type: 'plain_text',
-                  text: 'Conectar con Google',
-                  emoji: true
-                },
-                style: 'primary',
-                action_id: 'google_oauth_start',
-                url: authUrl
-              }
-            ]
-          },
-          {
-            type: 'context',
-            elements: [
-              {
-                type: 'mrkdwn',
-                text: '_Tu informacion se almacena de forma segura y encriptada_'
-              }
-            ]
-          },
-          ...sourcesBlocks,
-          ...footerBlocks
-        ]
-      });
-    }
+    await client.chat.postEphemeral({
+      channel: command.channel_id,
+      user: slackUserId,
+      text: 'Ajustes de Calendario',
+      blocks: [
+        {
+          type: 'header',
+          text: {
+            type: 'plain_text',
+            text: 'Ajustes de Calendario',
+            emoji: true
+          }
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: ':world_map: *Conectar proveedores de calendario*'
+          }
+        },
+        ...googleBlocks,
+        ...microsoftBlocks,
+        {
+          type: 'context',
+          elements: [{
+            type: 'mrkdwn',
+            text: '_Tu informacion se almacena de forma segura y encriptada_'
+          }]
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: '*Tip:* Usa `/calendario` para ver tus eventos de hoy y manana'
+          }
+        },
+        ...sourcesBlocks,
+        ...feedBlocks,
+        ...footerBlocks
+      ]
+    });
   });
 
-  // Handler para desconectar cuenta
+  // Handler para desconectar cuenta de Google
   app.action('disconnect_google', async ({ body, ack, client }) => {
     await ack();
 
     const slackUserId = body.user.id;
 
-    // Eliminar tokens de la BD
-    const deleted = OAuthToken.delete(slackUserId, 'google');
+    // 1. Eliminar sources de tipo 'google' (CASCADE borra eventos y sync_state)
+    const sourcesDeleted = Source.deleteByProviderForUser(slackUserId, 'google');
 
-    if (deleted) {
+    // 2. Eliminar tokens OAuth
+    const tokenDeleted = OAuthToken.delete(slackUserId, 'google');
+
+    if (tokenDeleted) {
+      const sourcesText = sourcesDeleted > 0
+        ? `\n\nSe ${sourcesDeleted === 1 ? 'elimino 1 calendario' : `eliminaron ${sourcesDeleted} calendarios`} y sus eventos.`
+        : '';
+
       await client.chat.postEphemeral({
         channel: body.channel.id,
         user: slackUserId,
@@ -304,7 +323,7 @@ export function registerAjustesCommand(app) {
             type: 'section',
             text: {
               type: 'mrkdwn',
-              text: '✅ *Cuenta de Google desconectada correctamente*\n\nPuedes volver a conectarla ejecutando `/ajustes`'
+              text: `✅ *Cuenta de Google desconectada correctamente*${sourcesText}\n\nPuedes volver a conectarla ejecutando \`/ajustes\``
             }
           }
         ]
@@ -320,6 +339,51 @@ export function registerAjustesCommand(app) {
 
   // Handler para el boton de OAuth (no se ejecuta porque tiene URL)
   app.action('google_oauth_start', async ({ ack }) => {
+    await ack();
+  });
+
+  // Handler para desconectar cuenta de Microsoft
+  app.action('disconnect_microsoft', async ({ body, ack, client }) => {
+    await ack();
+
+    const slackUserId = body.user.id;
+
+    // 1. Eliminar sources de tipo 'microsoft' (CASCADE borra eventos y sync_state)
+    const sourcesDeleted = Source.deleteByProviderForUser(slackUserId, 'microsoft');
+
+    // 2. Eliminar tokens OAuth
+    const tokenDeleted = OAuthToken.delete(slackUserId, 'microsoft');
+
+    if (tokenDeleted) {
+      const sourcesText = sourcesDeleted > 0
+        ? `\n\nSe ${sourcesDeleted === 1 ? 'elimino 1 calendario' : `eliminaron ${sourcesDeleted} calendarios`} y sus eventos.`
+        : '';
+
+      await client.chat.postEphemeral({
+        channel: body.channel.id,
+        user: slackUserId,
+        text: '✅ Cuenta de Microsoft desconectada',
+        blocks: [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `✅ *Cuenta de Microsoft desconectada correctamente*${sourcesText}\n\nPuedes volver a conectarla ejecutando \`/ajustes\``
+            }
+          }
+        ]
+      });
+    } else {
+      await client.chat.postEphemeral({
+        channel: body.channel.id,
+        user: slackUserId,
+        text: '⚠️ No se encontro ninguna cuenta de Microsoft conectada.'
+      });
+    }
+  });
+
+  // Handler para el boton de OAuth Microsoft (no se ejecuta porque tiene URL)
+  app.action('microsoft_oauth_start', async ({ ack }) => {
     await ack();
   });
 
@@ -389,13 +453,14 @@ export function registerAjustesCommand(app) {
       return;
     }
 
-    // Verificar que tiene tokens
-    const tokenRecord = OAuthToken.findBySlackUserId(slackUserId, 'google');
-    if (!tokenRecord || !tokenRecord.refreshToken) {
+    // Obtener todos los sources del usuario
+    const sources = Source.findBySlackUserId(slackUserId);
+
+    if (sources.length === 0) {
       await client.chat.postEphemeral({
         channel: body.channel.id,
         user: slackUserId,
-        text: '⚠️ No tienes una cuenta de Google vinculada.'
+        text: '⚠️ No tienes ningun calendario configurado.'
       });
       return;
     }
@@ -405,15 +470,56 @@ export function registerAjustesCommand(app) {
       await client.chat.postEphemeral({
         channel: body.channel.id,
         user: slackUserId,
-        text: '🔄 Sincronizando calendario...'
+        text: '🔄 Sincronizando calendarios...'
       });
 
-      // Ejecutar sync del calendario del usuario
-      const service = new GoogleCalendarService();
-      await service.initOAuthFromDB(slackUserId);
-      const result = await service.syncEvents();
+      const syncService = new SyncService();
+      const results = [];
 
-      const eventsCount = result.events?.length || 0;
+      // Sincronizar cada source
+      for (const source of sources) {
+        try {
+          const result = await syncService.syncSource(source.id);
+          results.push({
+            name: source.name,
+            type: source.type,
+            success: true,
+            count: result.eventsCount || 0,
+            unchanged: result.unchanged || false
+          });
+        } catch (error) {
+          console.error(`[Slack] Error sincronizando ${source.name}:`, error.message);
+          results.push({
+            name: source.name,
+            type: source.type,
+            success: false,
+            error: error.message
+          });
+        }
+      }
+
+      // Construir mensaje de resultados
+      const successResults = results.filter(r => r.success);
+      const failedResults = results.filter(r => !r.success);
+
+      let resultText = '✅ *Sincronizacion completada*\n\n';
+
+      if (successResults.length > 0) {
+        const totalEvents = successResults.reduce((sum, r) => sum + r.count, 0);
+        resultText += `📊 ${totalEvents} evento(s) en total\n`;
+        successResults.forEach(r => {
+          const status = r.unchanged ? '(sin cambios)' : '';
+          resultText += `• ${r.name}: ${r.count} evento(s) ${status}\n`;
+        });
+      }
+
+      if (failedResults.length > 0) {
+        resultText += '\n⚠️ *Errores:*\n';
+        failedResults.forEach(r => {
+          resultText += `• ${r.name}: ${r.error}\n`;
+        });
+      }
+
       await client.chat.postEphemeral({
         channel: body.channel.id,
         user: slackUserId,
@@ -423,13 +529,13 @@ export function registerAjustesCommand(app) {
             type: 'section',
             text: {
               type: 'mrkdwn',
-              text: `✅ *Sincronizacion completada*\n\n📊 ${eventsCount} evento(s) procesado(s)`
+              text: resultText
             }
           }
         ]
       });
     } catch (error) {
-      console.error('[Slack] Error sincronizando calendario:', error.message);
+      console.error('[Slack] Error sincronizando calendarios:', error.message);
       await client.chat.postEphemeral({
         channel: body.channel.id,
         user: slackUserId,
