@@ -241,6 +241,8 @@ export function registerAjustesCommand(app) {
     const slackTeamId = command.team_id;
     const userName = command.user_name;
 
+    console.log(`[Slack] /ajustes invoked by user ${slackUserId} @${userName}`);
+
     // Construir bloques de conexion de proveedores
     const googleBlocks = buildGoogleConnectionBlocks(slackUserId, slackTeamId, userName);
     const microsoftBlocks = await buildMicrosoftConnectionBlocks(slackUserId, slackTeamId, userName);

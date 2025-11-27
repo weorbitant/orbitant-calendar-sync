@@ -154,7 +154,8 @@ export function registerCalendarioCommand(app) {
     await ack();
 
     const slackUserId = command.user_id;
-
+    console.log(`[Slack] /calendario invoked by user ${slackUserId} @${command.user_name}`);
+    
     try {
       // Obtener todas las fuentes del usuario (Google + ICS)
       const sources = Source.findBySlackUserId(slackUserId);
