@@ -39,6 +39,8 @@ function getCCA() {
  * @param {string} slackUser.id - ID del usuario de Slack
  * @param {string} [slackUser.teamId] - ID del workspace de Slack
  * @param {string} [slackUser.name] - Nombre del usuario
+ * @param {string} [slackUser.responseUrl] - URL para actualizar mensaje de Slack
+ * @param {string} [slackUser.channelId] - ID del canal de Slack
  * @returns {Promise<Object>} - { url, state }
  */
 export async function getMicrosoftAuthUrl(slackUser = {}) {
@@ -58,6 +60,8 @@ export async function getMicrosoftAuthUrl(slackUser = {}) {
     slackUserId: slackUser.id,
     slackTeamId: slackUser.teamId,
     slackUserName: slackUser.name,
+    responseUrl: slackUser.responseUrl,
+    channelId: slackUser.channelId,
     createdAt: Date.now()
   });
 

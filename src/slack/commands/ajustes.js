@@ -121,8 +121,13 @@ function buildFooterBlocks(userId, lastSyncDate) {
 
 /**
  * Construye los bloques de conexion de Google Calendar
+ * @param {string} slackUserId - ID del usuario de Slack
+ * @param {string} slackTeamId - ID del workspace de Slack
+ * @param {string} userName - Nombre del usuario
+ * @param {string} responseUrl - URL para actualizar mensaje de Slack
+ * @param {string} channelId - ID del canal de Slack
  */
-function buildGoogleConnectionBlocks(slackUserId, slackTeamId, userName) {
+function buildGoogleConnectionBlocks(slackUserId, slackTeamId, userName, responseUrl, channelId) {
   const tokenRecord = OAuthToken.findBySlackUserId(slackUserId, 'google');
   const hasValidTokens = tokenRecord && tokenRecord.refreshToken;
 
@@ -152,7 +157,9 @@ function buildGoogleConnectionBlocks(slackUserId, slackTeamId, userName) {
     const { url: authUrl } = getGoogleAuthUrl({
       id: slackUserId,
       teamId: slackTeamId,
-      name: userName
+      name: userName,
+      responseUrl,
+      channelId
     });
 
     return [
@@ -176,8 +183,13 @@ function buildGoogleConnectionBlocks(slackUserId, slackTeamId, userName) {
 
 /**
  * Construye los bloques de conexion de Microsoft Outlook
+ * @param {string} slackUserId - ID del usuario de Slack
+ * @param {string} slackTeamId - ID del workspace de Slack
+ * @param {string} userName - Nombre del usuario
+ * @param {string} responseUrl - URL para actualizar mensaje de Slack
+ * @param {string} channelId - ID del canal de Slack
  */
-async function buildMicrosoftConnectionBlocks(slackUserId, slackTeamId, userName) {
+async function buildMicrosoftConnectionBlocks(slackUserId, slackTeamId, userName, responseUrl, channelId) {
   const tokenRecord = OAuthToken.findBySlackUserId(slackUserId, 'microsoft');
   const hasValidTokens = tokenRecord && tokenRecord.refreshToken;
 
@@ -207,7 +219,9 @@ async function buildMicrosoftConnectionBlocks(slackUserId, slackTeamId, userName
     const { url: authUrl } = await getMicrosoftAuthUrl({
       id: slackUserId,
       teamId: slackTeamId,
-      name: userName
+      name: userName,
+      responseUrl,
+      channelId
     });
 
     return [
@@ -240,12 +254,14 @@ export function registerAjustesCommand(app) {
     const slackUserId = command.user_id;
     const slackTeamId = command.team_id;
     const userName = command.user_name;
+    const responseUrl = command.response_url;
+    const channelId = command.channel_id;
 
     console.log(`[Slack] /ajustes invoked by user ${slackUserId} @${userName}`);
 
     // Construir bloques de conexion de proveedores
-    const googleBlocks = buildGoogleConnectionBlocks(slackUserId, slackTeamId, userName);
-    const microsoftBlocks = await buildMicrosoftConnectionBlocks(slackUserId, slackTeamId, userName);
+    const googleBlocks = buildGoogleConnectionBlocks(slackUserId, slackTeamId, userName, responseUrl, channelId);
+    const microsoftBlocks = await buildMicrosoftConnectionBlocks(slackUserId, slackTeamId, userName, responseUrl, channelId);
 
     // Verificar si hay al menos un proveedor conectado para el footer
     const googleToken = OAuthToken.findBySlackUserId(slackUserId, 'google');

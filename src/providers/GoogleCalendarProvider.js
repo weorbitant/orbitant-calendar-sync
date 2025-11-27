@@ -20,14 +20,11 @@ export class GoogleCalendarProvider extends BaseProvider {
       calendarId: this.source.config?.calendarId || 'primary'
     });
 
-    if (this.source.config?.useServiceAccount) {
-      await this.service.initServiceAccount(this.source.config.impersonateUser);
-    } else if (this.source.slack_user_id) {
+    if (this.source.slack_user_id) {
       // Use OAuth tokens from database for this Slack user
       await this.service.initOAuthFromDB(this.source.slack_user_id);
     } else {
-      // Fallback to .env tokens
-      await this.service.initOAuth();
+      throw new Error('Google Calendar requiere un slack_user_id para autenticación OAuth');
     }
   }
 

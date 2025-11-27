@@ -20,6 +20,8 @@ setInterval(() => {
  * @param {string} slackUser.id - ID del usuario de Slack
  * @param {string} [slackUser.teamId] - ID del workspace de Slack
  * @param {string} [slackUser.name] - Nombre del usuario
+ * @param {string} [slackUser.responseUrl] - URL para actualizar mensaje de Slack
+ * @param {string} [slackUser.channelId] - ID del canal de Slack
  * @returns {Object} - { url, state }
  */
 export function getGoogleAuthUrl(slackUser = {}) {
@@ -44,6 +46,8 @@ export function getGoogleAuthUrl(slackUser = {}) {
     slackUserId: slackUser.id,
     slackTeamId: slackUser.teamId,
     slackUserName: slackUser.name,
+    responseUrl: slackUser.responseUrl,
+    channelId: slackUser.channelId,
     createdAt: Date.now()
   });
 
@@ -112,4 +116,37 @@ export async function getGoogleUserInfo(accessToken) {
     name: data.name,
     picture: data.picture
   };
+}
+
+/**
+ * Actualiza un mensaje de Slack usando el response_url
+ * @param {string} responseUrl - URL de respuesta de Slack
+ * @param {Array} blocks - Bloques de Slack
+ * @param {string} text - Texto de fallback
+ * @returns {Promise<boolean>} - true si se actualizo correctamente
+ */
+export async function updateSlackMessage(responseUrl, blocks, text) {
+  if (!responseUrl) return false;
+
+  try {
+    const response = await fetch(responseUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        replace_original: true,
+        text,
+        blocks
+      })
+    });
+
+    if (!response.ok) {
+      console.error('[Slack] Error updating message:', response.status, await response.text());
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.error('[Slack] Error updating message:', err.message);
+    return false;
+  }
 }

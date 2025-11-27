@@ -6,7 +6,7 @@ dotenv.config();
 
 /**
  * Servicio para interactuar con Google Calendar API
- * Soporta tanto OAuth 2.0 como Service Account
+ * Utiliza OAuth 2.0 para autenticación
  */
 class GoogleCalendarService {
   constructor(options = {}) {
@@ -62,63 +62,6 @@ class GoogleCalendarService {
 
     this.auth = oauth2Client;
     this.calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-
-    return this;
-  }
-
-  /**
-   * Inicializa autenticacion OAuth 2.0 con tokens proporcionados directamente
-   * (para compatibilidad o casos especiales)
-   */
-  async initOAuth(tokens = {}) {
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_REDIRECT_URI
-    );
-
-    // Usar tokens proporcionados o del .env
-    const credentials = {
-      refresh_token: tokens.refresh_token || process.env.GOOGLE_REFRESH_TOKEN,
-      access_token: tokens.access_token,
-      expiry_date: tokens.expiry_date
-    };
-
-    if (!credentials.refresh_token) {
-      throw new Error('No refresh_token disponible. Ejecuta: npm run auth');
-    }
-
-    oauth2Client.setCredentials(credentials);
-
-    // Configurar renovación automática de tokens
-    oauth2Client.on('tokens', (newTokens) => {
-      console.log('[GoogleCalendar] Tokens renovados automáticamente');
-      if (newTokens.refresh_token) {
-        console.log('[GoogleCalendar] Nuevo refresh_token recibido - actualizar .env');
-      }
-    });
-
-    this.auth = oauth2Client;
-    this.calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-
-    return this;
-  }
-
-  /**
-   * Inicializa autenticación con Service Account
-   * Requiere Domain-Wide Delegation para acceder a calendarios de usuarios
-   */
-  async initServiceAccount(impersonateUser) {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE,
-      scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
-      clientOptions: {
-        subject: impersonateUser || process.env.GOOGLE_IMPERSONATE_USER
-      }
-    });
-
-    this.auth = await auth.getClient();
-    this.calendar = google.calendar({ version: 'v3', auth: this.auth });
 
     return this;
   }
@@ -282,44 +225,6 @@ class GoogleCalendarService {
     try {
       const response = await this.calendar.calendarList.list();
       return response.data.items || [];
-    } catch (error) {
-      this._handleError(error);
-    }
-  }
-
-  /**
-   * Observa cambios en el calendario (webhook)
-   * Requiere URL HTTPS pública
-   */
-  async watchEvents(webhookUrl, channelId, expiration) {
-    try {
-      const response = await this.calendar.events.watch({
-        calendarId: this.calendarId,
-        requestBody: {
-          id: channelId,
-          type: 'web_hook',
-          address: webhookUrl,
-          expiration: expiration || Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 días max
-        }
-      });
-      return response.data;
-    } catch (error) {
-      this._handleError(error);
-    }
-  }
-
-  /**
-   * Detiene la observación de un canal
-   */
-  async stopWatch(channelId, resourceId) {
-    try {
-      await this.calendar.channels.stop({
-        requestBody: {
-          id: channelId,
-          resourceId
-        }
-      });
-      return true;
     } catch (error) {
       this._handleError(error);
     }

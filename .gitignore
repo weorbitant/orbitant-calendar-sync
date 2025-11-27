@@ -4,3 +4,4 @@ credentials/
 data/
 *.log
 .DS_Store
+.env.prod

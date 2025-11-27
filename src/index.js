@@ -1,12 +1,11 @@
 import express from 'express';
 import { initializeDatabase, closeDatabase } from './config/database.js';
 import { getSyncScheduler } from './jobs/SyncScheduler.js';
-import GoogleCalendarService from './services/google-calendar.js';
 import slackApp from './slack/app.js';
 import { registerAjustesCommand } from './slack/commands/ajustes.js';
 import { registerCalendarioCommand } from './slack/commands/calendario.js';
 import { registerSourceActions } from './slack/actions/sources.js';
-import { exchangeCodeForTokens, validateOAuthState, getGoogleUserInfo } from './slack/actions/oauth.js';
+import { exchangeCodeForTokens, validateOAuthState, getGoogleUserInfo, updateSlackMessage } from './slack/actions/oauth.js';
 import { exchangeMicrosoftCodeForTokens, validateMicrosoftOAuthState, getMicrosoftUserInfo } from './slack/actions/microsoft-oauth.js';
 import { OAuthToken } from './models/OAuthToken.js';
 import { FeedToken } from './models/FeedToken.js';
@@ -17,122 +16,6 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-
-// Legacy: Almacén en memoria para syncToken de webhooks Google
-const legacySyncState = {
-  syncToken: null,
-  lastSync: null
-};
-
-// Legacy: Servicio de calendario para webhooks Google directos
-let calendarService = null;
-
-async function initCalendarService() {
-  try {
-    calendarService = new GoogleCalendarService();
-    await calendarService.initOAuth();
-    console.log('Google Calendar Service inicializado');
-  } catch (error) {
-    console.warn('Google Calendar Service no inicializado:', error.message);
-    console.log('Los calendarios Google se configurarán via API de sources');
-  }
-}
-
-// ============================================
-// WEBHOOK ENDPOINTS (Google Push Notifications)
-// ============================================
-
-/**
- * POST /api/webhook
- * Endpoint para recibir notificaciones push de Google
- */
-app.post('/api/google/webhook', async (req, res) => {
-  const channelId = req.headers['x-goog-channel-id'];
-  const resourceState = req.headers['x-goog-resource-state'];
-
-  console.log(`[Webhook] Canal: ${channelId}, Estado: ${resourceState}`);
-
-  if (resourceState === 'sync') {
-    console.log('[Webhook] Canal sincronizado correctamente');
-  } else if (resourceState === 'exists' && calendarService) {
-    console.log('[Webhook] Cambios detectados, ejecutando sync...');
-    try {
-      const result = await calendarService.syncEvents(legacySyncState.syncToken);
-      legacySyncState.syncToken = result.syncToken;
-      console.log(`[Webhook] Sync completado: ${result.events.length} eventos actualizados`);
-    } catch (error) {
-      console.error('[Webhook] Error en sync:', error.message);
-    }
-  }
-
-  res.status(200).send('OK');
-});
-
-/**
- * POST /api/webhook/register
- * Registra un webhook para recibir notificaciones push
- */
-app.post('/api/google/webhook/register', async (req, res) => {
-  if (!calendarService) {
-    return res.status(503).json({
-      success: false,
-      error: 'Google Calendar Service no inicializado'
-    });
-  }
-
-  try {
-    const { webhookUrl, channelId } = req.body;
-
-    if (!webhookUrl || !channelId) {
-      return res.status(400).json({
-        success: false,
-        error: 'webhookUrl y channelId son requeridos'
-      });
-    }
-
-    const result = await calendarService.watchEvents(webhookUrl, channelId);
-
-    res.json({
-      success: true,
-      channel: {
-        id: result.id,
-        resourceId: result.resourceId,
-        expiration: new Date(parseInt(result.expiration)).toISOString()
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-/**
- * DELETE /api/webhook/:channelId
- * Detiene un webhook registrado
- */
-app.delete('/api/google/webhook/:channelId', async (req, res) => {
-  if (!calendarService) {
-    return res.status(503).json({
-      success: false,
-      error: 'Google Calendar Service no inicializado'
-    });
-  }
-
-  try {
-    const { resourceId } = req.body;
-
-    if (!resourceId) {
-      return res.status(400).json({
-        success: false,
-        error: 'resourceId es requerido en el body'
-      });
-    }
-
-    await calendarService.stopWatch(req.params.channelId, resourceId);
-    res.json({ success: true, message: 'Webhook detenido' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 
 // ============================================
 // GOOGLE OAUTH CALLBACK
@@ -256,6 +139,19 @@ app.get('/auth/google/callback', async (req, res) => {
       console.log(`[OAuth] Created Google Calendar source for user: ${stateData.slackUserId}`);
     }
 
+    // Actualizar mensaje de Slack con resultado
+    if (stateData.responseUrl) {
+      await updateSlackMessage(stateData.responseUrl, [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `:white_check_mark: *Cuenta de Google conectada*\n${googleEmail || 'Email no disponible'}\n\nEjecuta \`/ajustes\` para ver tus opciones.`
+          }
+        }
+      ], 'Cuenta de Google conectada');
+    }
+
     res.send(`
       <!DOCTYPE html>
       <html lang="es">
@@ -283,6 +179,20 @@ app.get('/auth/google/callback', async (req, res) => {
     `);
   } catch (err) {
     console.error('[OAuth] Error:', err.message);
+
+    // Notificar error en Slack
+    if (stateData?.responseUrl) {
+      await updateSlackMessage(stateData.responseUrl, [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `:x: *Error al conectar Google*\n${err.message}\n\nEjecuta \`/ajustes\` para intentar de nuevo.`
+          }
+        }
+      ], 'Error al conectar Google');
+    }
+
     res.status(500).send(`
       <!DOCTYPE html>
       <html lang="es">
@@ -424,6 +334,19 @@ app.get('/auth/azure/callback', async (req, res) => {
       console.log(`[OAuth Microsoft] Created Microsoft Calendar source for user: ${stateData.slackUserId}`);
     }
 
+    // Actualizar mensaje de Slack con resultado
+    if (stateData.responseUrl) {
+      await updateSlackMessage(stateData.responseUrl, [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `:white_check_mark: *Cuenta de Microsoft conectada*\n${microsoftEmail || 'Email no disponible'}\n\nEjecuta \`/ajustes\` para ver tus opciones.`
+          }
+        }
+      ], 'Cuenta de Microsoft conectada');
+    }
+
     res.send(`
       <!DOCTYPE html>
       <html lang="es">
@@ -451,6 +374,20 @@ app.get('/auth/azure/callback', async (req, res) => {
     `);
   } catch (err) {
     console.error('[OAuth Microsoft] Error:', err.message);
+
+    // Notificar error en Slack
+    if (stateData?.responseUrl) {
+      await updateSlackMessage(stateData.responseUrl, [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `:x: *Error al conectar Microsoft*\n${err.message}\n\nEjecuta \`/ajustes\` para intentar de nuevo.`
+          }
+        }
+      ], 'Error al conectar Microsoft');
+    }
+
     res.status(500).send(`
       <!DOCTYPE html>
       <html lang="es">
@@ -514,7 +451,6 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'calendar-sync-service',
-    legacyGoogleConnected: calendarService !== null,
     scheduler: scheduler.getStatus()
   });
 });
@@ -528,9 +464,6 @@ async function start() {
     // Initialize database
     console.log('Inicializando base de datos...');
     initializeDatabase();
-
-    // Initialize legacy Google Calendar service (optional)
-    await initCalendarService();
 
     // Start sync scheduler
     const scheduler = getSyncScheduler();
@@ -548,15 +481,13 @@ async function start() {
     app.listen(PORT, () => {
       console.log(`\nServidor corriendo en http://localhost:${PORT}`);
       console.log('\nEndpoints disponibles:');
-      console.log('  GET    /auth/google/callback   - Callback OAuth Google');
-      console.log('  GET    /auth/azure/callback    - Callback OAuth Microsoft');
-      console.log('  POST   /api/google/webhook           - Receptor de notificaciones Google');
-      console.log('  POST   /api/google/webhook/register  - Registrar webhook Google');
-      console.log('  DELETE /api/google/webhook/:id       - Cancelar webhook');
-      console.log('  GET    /feed/:token/orbitando.ics - Feed iCal unificado');
-      console.log('  GET    /health                - Estado del servicio');
+      console.log('  GET  /auth/google/callback      - Callback OAuth Google');
+      console.log('  GET  /auth/azure/callback       - Callback OAuth Microsoft');
+      console.log('  GET  /feed/:token/orbitando.ics - Feed iCal unificado');
+      console.log('  GET  /health                    - Estado del servicio');
       console.log('\nComandos de Slack:');
-      console.log('  /calendarios                  - Gestionar calendarios\n');
+      console.log('  /ajustes    - Configurar cuentas y calendarios');
+      console.log('  /calendario - Ver eventos de hoy y mañana\n');
     });
   } catch (error) {
     console.error('Error iniciando servidor:', error.message);
